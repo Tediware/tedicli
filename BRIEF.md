@@ -137,3 +137,99 @@ tedi transaction list | get | logs
 ```
 
 Every topic must stay thin: logic and licensed data remain server-side behind the API.
+
+
+# Codex Review (2026-06-25)
+
+1. Summary
+
+The brief is directionally strong on product positioning and grammar, but several core implementation assumptions do not match the current codebase. The biggest mismatches are auth (X12 API is not API-key authenticated today), transaction lookup shape (`856` vs `SH856`), output contract (JSON is currently available for reference endpoints), and scraping controls (no console truncation, no per-account throttle). Confidence: medium-high, based on direct controller/model reads plus targeted spec runs and Rails runner checks.
+
+2. Claim verification
+
+- **Claim:** X12 reference is global licensed standard data, release-scoped.
+  - **Verdict:** Confirmed.
+  - **Evidence:** X12 models are scoped by `x12_release_id` and not org-bound (`app/models/x12/release.rb:4`, `app/models/x12/segment.rb:4`, `app/models/x12/element.rb:4`, `app/models/x12/transaction_set.rb:4`). API routes are release-scoped under `/api/x12/:release_id/...` (`config/routes.rb:215`).
+
+- **Claim:** `tedi x12 releases` can map to a server endpoint listing supported releases.
+  - **Verdict:** Confirmed.
+  - **Evidence:** `GET /api/x12/releases` exists (`config/routes.rb:213`, `app/controllers/api/x12/releases_controller.rb:4`). Local DB currently has `004010,004060,005010,006010,007010,008010` (command: `bundle exec rails runner 'puts X12::Release.order(:code).pluck(:code).join(",")'`).
+
+- **Claim:** `tedi x12 transaction 856` is a valid lookup shape.
+  - **Verdict:** Refuted (against current API).
+  - **Evidence:** transaction lookup currently uses identifier (`func_group + code`), not bare code (`app/controllers/api/x12/transaction_sets_controller.rb:60`, `app/models/x12/transaction_set.rb:23`, `app/models/x12/transaction_set.rb:27`). In current data, 856 resolves as `SH856` (command: `bundle exec rails runner '...find_by(code: "856")...puts "#{ts.func_group}#{ts.code}"'` output `SH856`).
+
+- **Claim:** Element code lists belong in element output, not a separate top-level command.
+  - **Verdict:** Confirmed.
+  - **Evidence:** element renderers include allowed codes (`app/services/x12_element_console_output_service.rb:37`, `app/services/x12_element_markdown_summary_service.rb:31`). JSON element serializer also includes code values for `ID` elements (`app/serializers/x12/element_serializer.rb:8`, `app/serializers/x12/element_serializer.rb:14`).
+
+- **Claim:** Large code lists are truncated in console output.
+  - **Verdict:** Refuted.
+  - **Evidence:** console renderer prints all codes with no truncation branch (`app/services/x12_element_console_output_service.rb:41`). In current data, element `008010/128` has `1905` codes and console output has `1918` lines (commands: max-code query and line-count query).
+
+- **Claim:** Reference output is presentation-only (`console|markdown`), no JSON.
+  - **Verdict:** Refuted (current server behavior).
+  - **Evidence:** `/api/x12/:release_id/{segments,elements,transaction_sets}` `show` endpoints return JSON (`app/controllers/api/x12/segments_controller.rb:28`, `app/controllers/api/x12/elements_controller.rb:30`, `app/controllers/api/x12/transaction_sets_controller.rb:28`). Index/search are also JSON (`app/controllers/api/x12/search_controller.rb:8`).
+
+- **Claim:** Console output includes release context in output.
+  - **Verdict:** Refuted.
+  - **Evidence:** renderers print code/name headers only, no release field (`app/services/x12_element_console_output_service.rb:11`, `app/services/x12_segment_console_output_service.rb:11`, `app/services/x12_transaction_set_console_output_service.rb:11`). Runner output starts with `98 - Entity Identifier Code` and `# 98 - Entity Identifier Code`.
+
+- **Claim:** All commands require API key auth.
+  - **Verdict:** Refuted (today).
+  - **Evidence:** `Api::X12::BaseController` skips auth globally (`app/controllers/api/x12/base_controller.rb:5`). X12 download requires signed-in session user (`Current.user`), not API key (`app/controllers/api/x12/base_controller.rb:22`). API-key auth is implemented in `Platform::BaseController` only (`app/controllers/platform/base_controller.rb:20`).
+
+- **Claim:** Browser device flow is the target auth path (requires server endpoints).
+  - **Verdict:** Unverifiable as implemented; practically absent in current server.
+  - **Evidence:** no device/oauth-style routes in `config/routes.rb` (grep for `device|oauth|authorization` returned no matches). Existing auth is session cookie (`app/controllers/concerns/authentication.rb:24`) plus manual API key management under authenticated web API (`app/controllers/api/api_keys_controller.rb:17`).
+
+- **Claim:** X12 lookups are free and do not count toward the 800 transmission limit.
+  - **Verdict:** Confirmed.
+  - **Evidence:** usage limit/billing calculations are based on `BillingEvent` type `edi_transmission` (`app/models/organization.rb:281`, `app/services/usage_report_service.rb:23`, `app/models/billing_event.rb:13`). X12 controllers do not create billing events. Transmission billing is created from `EdiTransmission` only (`app/models/edi_transmission.rb:133`).
+
+- **Claim:** X12 lookups are rate-limited per account.
+  - **Verdict:** Refuted.
+  - **Evidence:** current X12 throttles are per session cookie and per IP (`config/initializers/rack_attack.rb:151`, `config/initializers/rack_attack.rb:155`), not per account/API key id.
+
+- **Claim:** `tedi whoami` fits initial locked command set.
+  - **Verdict:** Unverifiable/likely blocked by current backend.
+  - **Evidence:** no `whoami` endpoint found in routes/controllers for API-key principal (grep for `whoami` returned none). `api/current_user` exists but is session-auth (`config/routes.rb:62`, `app/controllers/api/base_controller.rb:3`).
+
+- **Claim:** Reference boundary is global standard data, partner implementations are separate control-plane state.
+  - **Verdict:** Confirmed.
+  - **Evidence:** X12 reference lives in global `X12::*` models; partner/implementation resources are separate APIs (`config/routes.rb:158`, `config/routes.rb:178`, `app/models/x12/transaction_set.rb:4`).
+
+3. Risks and edge cases
+
+- Backend dependency risk: this CLI brief assumes API-key-authenticated reference lookups, but current X12 endpoints are session/anonymous patterns, so CLI implementation will stall unless server changes land first.
+- Licensing posture gap: ticket emphasizes account+EULA gating, but current reference endpoints still expose substantial JSON/list data without API key auth (`skip_before_action :require_authentication`), which weakens the stated defense model.
+- Scraping surface mismatch: no console truncation exists today, and some elements have very large code lists (1905 values), so a naive CLI can pull large corpus chunks quickly.
+- Transaction lookup ambiguity: brief uses bare transaction code (`856`), while existing identifiers are functional-group prefixed (`SH856`), leading to avoidable 404s unless normalized server-side or client-side.
+- Output contract mismatch: brief says presentation-only with optional color; current download endpoints are file attachments and render plain text/markdown only, with no color control.
+- Future control/data-plane command risk: grammar includes `exchange`, but there is no first-class Exchange model/resource in current API (`edi_transmissions` exists instead), so noun drift is likely.
+
+4. Gaps in the ticket
+
+- Missing explicit backend prerequisites: no linked server ticket/acceptance criteria for API-key X12 auth, text-inline responses, transaction code resolution, and release echo.
+- Missing auth contract details: token type (API key vs device token), validation endpoint for `auth status`/`whoami`, and sandbox-key behavior are not defined.
+- Missing error contract: CLI-facing behavior for 401/403/404/429 is described informally, but server response formats are currently mixed JSON/text and not standardized for CLI consumption.
+- Missing rollout plan for stopgap auth: no trigger/date to retire pasted-key login, no compatibility expectations between stopgap and device flow.
+- Missing acceptance criteria for anti-scrape controls: target rate-limit values, truncation thresholds, and whether `markdown` should also be bounded are unspecified.
+
+5. Implementation considerations
+
+- Treat this as a two-repo effort: backend API contract first, then CLI. The existing `ai/tickets/x12-reference-api.md` already captures most required backend deltas and should be reconciled with this brief.
+- Prefer explicit endpoint contract tests before CLI work: request specs for auth mode, content type, `variant`, `color`, 404/429 bodies, and bare transaction-code lookup.
+- Keep tenancy boundaries strict as CLI expands: reference commands can be global, but control/data plane commands should map to `/platform` API-key endpoints to preserve org scoping.
+- Define noun mapping now for planned commands: `transaction` probably maps to `edi_transmissions`; `exchange` currently has no direct resource and needs a product/API decision.
+- Add release context in renderer output if required by the brief; this is currently absent in all three reference renderers.
+
+6. Open questions / anything else relevant
+
+- Should reference lookups be API-key required for CLI only, or should web anonymous previews remain as-is? If both stay, clarify exactly what payload tier is public vs gated.
+- For `tedi x12 transaction <id>`, should `<id>` be bare code (`856`), identifier (`SH856`), or both accepted?
+- What is the source of truth for `whoami` under API-key auth?
+- Should per-account rate limiting key on API key id, organization id, or both (plus IP backstop)?
+- Do we want to keep JSON reference endpoints for web app internals while refusing CLI `--json`, or remove/restrict JSON server-side for consistency with the licensing stance?
+- Validation run completed: `bundle exec rspec spec/controllers/api/x12/elements_controller_spec.rb spec/controllers/api/x12/segments_controller_spec.rb spec/controllers/api/x12/transaction_sets_controller_spec.rb spec/config/rack_attack_spec.rb` passed (`41 examples, 0 failures`).
+
