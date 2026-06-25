@@ -36,9 +36,11 @@
     "@oclif/core": "^4",
     "@oclif/plugin-help": "^6",
     "@oclif/plugin-update": "^4",
+    "@oclif/plugin-warn-if-update-available": "^3.1.67",
     "chalk": "^5"
   },
   "devDependencies": {
+    "@oclif/test": "^4.1.20",
     "@types/node": "^20",
     "oclif": "^4",
     "tsx": "^4",
@@ -51,8 +53,16 @@
     "topicSeparator": " ",
     "plugins": [
       "@oclif/plugin-help",
-      "@oclif/plugin-update"
+      "@oclif/plugin-update",
+      "@oclif/plugin-warn-if-update-available"
     ],
+    "hooks": {
+      "postrun": "./dist/hooks/postrun/changelog"
+    },
+    "warn-if-update-available": {
+      "timeoutInDays": 1,
+      "message": "<%= config.name %> <%= chalk.dim(config.version) %> → <%= chalk.greenBright(latest) %> is available. Run `<%= config.bin %> update`."
+    },
     "topics": {
       "auth": {
         "description": "Authenticate with the Tediware platform and inspect credentials."
@@ -71,6 +81,7 @@
     "check:licensed-data": "node scripts/check-no-licensed-data.mjs",
     "postpack": "rm -f oclif.manifest.json",
     "prepack": "npm run build && oclif manifest",
+    "pretest": "npm run build",
     "test": "node --import tsx --test test/*.test.ts"
   }
 }
