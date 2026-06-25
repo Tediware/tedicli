@@ -83,6 +83,14 @@ describe('commands (authenticated)', () => {
     assert.match(stdout, /004010/)
     assert.match(stdout, /005010/)
   })
+
+  it('update command is registered with a --version flag (npm-native)', async () => {
+    // --help loads the command without actually shelling out to npm.
+    const {stdout, error} = await run(['update', '--help'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /installs via npm/i)
+    assert.match(stdout, /--version/)
+  })
 })
 
 describe('commands (unauthenticated)', () => {
