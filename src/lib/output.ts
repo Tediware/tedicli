@@ -26,6 +26,9 @@ export interface ColorContext {
 export function wantsColor(format: OutputFormat, ctx: ColorContext = {}): boolean {
   if (format !== 'console') return false
   if (ctx.noColorFlag) return false
+  // Per https://no-color.org, NO_COLOR disables color when present AND non-empty.
+  // An empty value is intentionally treated as unset, so `NO_COLOR= tedi ...`
+  // can re-enable color for a single invocation in a shell that exports it.
   if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== '') return false
   const isTty = ctx.isTty ?? Boolean(process.stdout.isTTY)
   return isTty

@@ -37,7 +37,6 @@ export interface RenderedReference {
 export interface ReleaseInfo {
   id: string
   description: string
-  default?: boolean
 }
 
 export interface Identity {
@@ -85,7 +84,7 @@ export interface ApiClientOptions {
 // ---------------------------------------------------------------------------
 
 const MOCK_RELEASES: ReleaseInfo[] = [
-  {id: '004010', description: 'ASC X12 version 004010', default: true},
+  {id: '004010', description: 'ASC X12 version 004010'},
   {id: '005010', description: 'ASC X12 version 005010'},
   {id: '006020', description: 'ASC X12 version 006020'},
 ]
@@ -193,6 +192,13 @@ export class HttpApiClient implements ApiClient {
     return this.opts.baseUrl.replace(/\/$/, '')
   }
 
+  /** Map common error statuses to actionable errors, consistently across calls. */
+  private assertOk(res: Response): void {
+    if (res.status === 401) throw new NotAuthenticatedError()
+    if (res.status === 403) throw new TermsNotAcceptedError()
+    if (!res.ok) throw new TediError(`Tediware API request failed (${res.status} ${res.statusText}).`)
+  }
+
   private async reference(path: string, req: ReferenceRequest): Promise<RenderedReference> {
     if (!this.opts.token) throw new NotAuthenticatedError()
     const url = new URL(`${this.base}${path}`)
@@ -201,9 +207,7 @@ export class HttpApiClient implements ApiClient {
     if (req.color) url.searchParams.set('color', 'true')
 
     const res = await fetch(url, {headers: {authorization: `Bearer ${this.opts.token}`}})
-    if (res.status === 401) throw new NotAuthenticatedError()
-    if (res.status === 403) throw new TermsNotAcceptedError()
-    if (!res.ok) throw new TediError(`Tediware API request failed (${res.status} ${res.statusText}).`)
+    this.assertOk(res)
 
     const body = await res.text()
     return {release: req.release, format: req.format, body}
@@ -222,10 +226,11 @@ export class HttpApiClient implements ApiClient {
   }
 
   async x12Releases(): Promise<ReleaseInfo[]> {
+    if (!this.opts.token) throw new NotAuthenticatedError()
     const res = await fetch(`${this.base}/v1/x12/releases`, {
-      headers: this.opts.token ? {authorization: `Bearer ${this.opts.token}`} : {},
+      headers: {authorization: `Bearer ${this.opts.token}`},
     })
-    if (!res.ok) throw new TediError(`Tediware API request failed (${res.status} ${res.statusText}).`)
+    this.assertOk(res)
     return (await res.json()) as ReleaseInfo[]
   }
 
@@ -234,8 +239,7 @@ export class HttpApiClient implements ApiClient {
     const res = await fetch(`${this.base}/v1/identity`, {
       headers: {authorization: `Bearer ${this.opts.token}`},
     })
-    if (res.status === 401) throw new NotAuthenticatedError()
-    if (!res.ok) throw new TediError(`Tediware API request failed (${res.status} ${res.statusText}).`)
+    this.assertOk(res)
     return (await res.json()) as Identity
   }
 
@@ -254,9 +258,16 @@ export class HttpApiClient implements ApiClient {
 // Factory
 // ---------------------------------------------------------------------------
 
-/** Whether the mock client should be used. Mock is the default in the scaffold. */
+/**
+ * Whether the mock client should be used. Mock is the default in the scaffold
+ * (the real reference endpoints don't exist yet); disable it with any common
+ * falsy value, e.g. `TEDI_API_MOCK=0` or `TEDI_API_MOCK=false`. This default
+ * should flip to the HTTP client once the server endpoints ship.
+ */
 export function useMock(): boolean {
-  return process.env.TEDI_API_MOCK !== '0'
+  const value = (process.env.TEDI_API_MOCK ?? '').trim().toLowerCase()
+  if (value === '') return true
+  return !['0', 'false', 'no', 'off'].includes(value)
 }
 
 export function createApiClient(opts: ApiClientOptions): ApiClient {

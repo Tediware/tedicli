@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
-import {mkdtemp, rm} from 'node:fs/promises'
+import {mkdtemp, rm, writeFile, stat} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {after, before, describe, it} from 'node:test'
 
+import {useMock} from '../src/lib/api-client.js'
 import {ConfigStore, DEFAULT_X12_RELEASE, isConfigKey} from '../src/lib/config-store.js'
+import {FileCredentialStore} from '../src/lib/credentials.js'
 import {JsonNotSupportedError} from '../src/lib/errors.js'
 import {wantsColor} from '../src/lib/output.js'
 
@@ -76,6 +78,72 @@ describe('ConfigStore', () => {
     const entry = (await store.list()).find((e) => e.key === 'x12.release')
     assert.equal(entry?.source, 'env')
     delete process.env.TEDI_X12_RELEASE
+  })
+})
+
+describe('FileCredentialStore', () => {
+  let dir: string
+
+  before(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'tedi-creds-'))
+  })
+
+  after(async () => {
+    await rm(dir, {recursive: true, force: true})
+  })
+
+  it('round-trips a token and stores the file as 0600', async () => {
+    const store = new FileCredentialStore(dir)
+    await store.set({token: 'sk-secret'})
+    const got = await store.get()
+    assert.equal(got?.token, 'sk-secret')
+    const st = await stat(join(dir, 'credentials.json'))
+    assert.equal(st.mode & 0o777, 0o600)
+  })
+
+  it('treats a corrupt file as not signed in', async () => {
+    const store = new FileCredentialStore(dir)
+    await writeFile(join(dir, 'credentials.json'), '{ not json', 'utf8')
+    assert.equal(await store.get(), undefined)
+  })
+
+  it('treats a file with no token as not signed in', async () => {
+    const store = new FileCredentialStore(dir)
+    await writeFile(join(dir, 'credentials.json'), '{}', 'utf8')
+    assert.equal(await store.get(), undefined)
+  })
+
+  it('clears credentials', async () => {
+    const store = new FileCredentialStore(dir)
+    await store.set({token: 'sk-secret'})
+    await store.clear()
+    assert.equal(await store.get(), undefined)
+  })
+})
+
+describe('useMock', () => {
+  const original = process.env.TEDI_API_MOCK
+
+  after(() => {
+    if (original === undefined) delete process.env.TEDI_API_MOCK
+    else process.env.TEDI_API_MOCK = original
+  })
+
+  it('defaults to mock when unset', () => {
+    delete process.env.TEDI_API_MOCK
+    assert.equal(useMock(), true)
+  })
+
+  it('disables mock for common falsy values', () => {
+    for (const v of ['0', 'false', 'no', 'off', 'FALSE']) {
+      process.env.TEDI_API_MOCK = v
+      assert.equal(useMock(), false, `expected ${v} to disable mock`)
+    }
+  })
+
+  it('keeps mock on for an empty value', () => {
+    process.env.TEDI_API_MOCK = ''
+    assert.equal(useMock(), true)
   })
 })
 

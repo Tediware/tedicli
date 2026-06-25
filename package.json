@@ -30,7 +30,7 @@
     "/NOTICE"
   ],
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18.19.0"
   },
   "dependencies": {
     "@oclif/core": "^4",
@@ -71,7 +71,6 @@
     "check:licensed-data": "node scripts/check-no-licensed-data.mjs",
     "postpack": "rm -f oclif.manifest.json",
     "prepack": "npm run build && oclif manifest",
-    "test": "node --import tsx --test test/*.test.ts",
-    "version": "oclif readme && git add README.md"
+    "test": "node --import tsx --test test/*.test.ts"
   }
 }

@@ -55,19 +55,22 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
     this.args = args as Interfaces.InferredArgs<T['args']>
   }
 
+  private async buildClient(token?: string): Promise<ApiClient> {
+    const baseUrl = await this.configStore.get('api.baseUrl')
+    return createApiClient({baseUrl, token})
+  }
+
   /** Build an API client using the configured base URL and stored token (if any). */
   protected async getClient(): Promise<ApiClient> {
-    const baseUrl = await this.configStore.get('api.baseUrl')
     const stored = await this.credentials.get()
-    return createApiClient({baseUrl, token: stored?.token})
+    return this.buildClient(stored?.token)
   }
 
   /** Like getClient, but fails with a clear message when not authenticated. */
   protected async getAuthedClient(): Promise<ApiClient> {
     const stored = await this.credentials.get()
     if (!stored) throw new NotAuthenticatedError()
-    const baseUrl = await this.configStore.get('api.baseUrl')
-    return createApiClient({baseUrl, token: stored.token})
+    return this.buildClient(stored.token)
   }
 
   protected async catch(err: Error & {exitCode?: number}): Promise<unknown> {

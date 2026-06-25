@@ -9,8 +9,10 @@
  * change to callers.
  */
 
-import {readFile, writeFile, rm, mkdir, chmod} from 'node:fs/promises'
-import {dirname, join} from 'node:path'
+import {readFile, rm} from 'node:fs/promises'
+import {join} from 'node:path'
+
+import {writeFileAtomic} from './atomic-write.js'
 
 export interface StoredCredentials {
   token: string
@@ -34,20 +36,36 @@ export class FileCredentialStore implements CredentialStore {
   }
 
   async get(): Promise<StoredCredentials | undefined> {
+    let raw: string
     try {
-      const raw = await readFile(this.file, 'utf8')
-      return JSON.parse(raw) as StoredCredentials
+      raw = await readFile(this.file, 'utf8')
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined
       throw err
     }
+
+    // A corrupt or partial file (e.g. an interrupted write) is treated as
+    // "not signed in" rather than crashing every command; the user can re-login.
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      return undefined
+    }
+
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      typeof (parsed as {token?: unknown}).token !== 'string' ||
+      (parsed as {token: string}).token.length === 0
+    ) {
+      return undefined
+    }
+    return parsed as StoredCredentials
   }
 
   async set(creds: StoredCredentials): Promise<void> {
-    await mkdir(dirname(this.file), {recursive: true})
-    await writeFile(this.file, JSON.stringify(creds, null, 2) + '\n', {encoding: 'utf8', mode: 0o600})
-    // Ensure perms even if the file pre-existed with looser bits.
-    await chmod(this.file, 0o600)
+    await writeFileAtomic(this.file, JSON.stringify(creds, null, 2) + '\n', 0o600)
   }
 
   async clear(): Promise<void> {

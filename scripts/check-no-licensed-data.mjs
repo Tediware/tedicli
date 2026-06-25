@@ -61,11 +61,17 @@ const PUBLISHER_MARKERS = [
 
 const SYNTHETIC_MARKER = 'tedi:synthetic-data-ok'
 
-// A line that looks like an X12 code value or element/segment definition row,
-// e.g. "AA   Some description" or "01  Reference Identification  ID  M".
-const DEFINITION_LINE = /^\s*[A-Z0-9]{1,4}\s+\S+.*/
+// Lines that look like an X12 code value or element/segment definition row.
+// Two shapes are matched so the density check covers both human-readable dumps
+// and recorded JSON API responses (a recorded response is an explicit risk):
+//   - tabular:  "AA   Some description"  /  "01  Reference Identification  ID  M"
+//   - JSON map: "AA": "Some description"  /  { "code": "AA", ... }
+const DEFINITION_LINES = [/^\s*[A-Z0-9]{1,4}\s+\S+.*/, /^\s*"[A-Z0-9]{1,4}"\s*:/]
 const DENSITY_THRESHOLD = 25
 
+// Scans git-tracked files only. That matches the thing we actually want to
+// prevent — licensed data reaching the repo/publish — and mirrors what CI sees
+// after checkout. Untracked working-tree files are intentionally out of scope.
 function trackedFiles() {
   const out = execSync('git ls-files', {encoding: 'utf8'})
   return out.split('\n').filter(Boolean)
@@ -92,7 +98,7 @@ for (const file of trackedFiles()) {
 
   if (content.includes(SYNTHETIC_MARKER)) continue
 
-  const defLines = content.split('\n').filter((line) => DEFINITION_LINE.test(line)).length
+  const defLines = content.split('\n').filter((line) => DEFINITION_LINES.some((re) => re.test(line))).length
   if (defLines >= DENSITY_THRESHOLD) {
     failures.push(
       `${file}: ${defLines} definition/code-list-like lines (threshold ${DENSITY_THRESHOLD}). ` +
