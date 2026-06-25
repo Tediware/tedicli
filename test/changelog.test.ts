@@ -56,7 +56,22 @@ describe('fetchChangelog', () => {
     assert.equal(entry?.version, 'v1.0.0')
   })
 
-  it('returns undefined (no fallback) when the requested tag is missing', async () => {
+  it('finds a v-prefixed tag when given an unprefixed npm version', async () => {
+    // npm versions are unprefixed (1.2.3) but the GitHub release tag is v1.2.3.
+    const seen: string[] = []
+    stubFetch((url) => {
+      seen.push(url)
+      return url.endsWith('/tags/v1.2.3')
+        ? {status: 200, body: {tag_name: 'v1.2.3', body: 'notes', html_url: 'https://gh/r'}}
+        : {status: 404}
+    })
+    const entry = await fetchChangelog('tediware/tedicli', {version: '1.2.3'})
+    assert.equal(entry?.version, 'v1.2.3')
+    assert.ok(seen.some((u) => u.endsWith('/tags/1.2.3')), 'tries the raw version first')
+    assert.ok(seen.some((u) => u.endsWith('/tags/v1.2.3')), 'falls through to the v-prefixed tag')
+  })
+
+  it('returns undefined (no fallback to latest) when no tag variant exists', async () => {
     stubFetch(() => ({status: 404}))
     assert.equal(await fetchChangelog('tediware/tedicli', {version: 'v9.9.9'}), undefined)
   })

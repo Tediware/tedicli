@@ -39,9 +39,28 @@ export async function fetchChangelog(
   repoSlug: string,
   opts: {version?: string; userAgent?: string; timeoutMs?: number} = {},
 ): Promise<ChangelogEntry | undefined> {
-  const path = opts.version ? `releases/tags/${encodeURIComponent(opts.version)}` : 'releases/latest'
-  const url = `https://api.github.com/repos/${repoSlug}/${path}`
+  if (!opts.version) {
+    return fetchReleasePath(repoSlug, 'releases/latest', opts)
+  }
+  // npm versions are unprefixed (1.2.3) but GitHub release tags are usually
+  // v-prefixed (v1.2.3). Try the given form and the toggled-prefix form so a
+  // specific-version update still finds its notes. This only varies the tag
+  // spelling for the SAME version — it never falls back to a different release.
+  const v = opts.version
+  const candidates = v.startsWith('v') ? [v, v.slice(1)] : [v, `v${v}`]
+  for (const tag of candidates) {
+    const entry = await fetchReleasePath(repoSlug, `releases/tags/${encodeURIComponent(tag)}`, opts)
+    if (entry) return entry
+  }
+  return undefined
+}
 
+async function fetchReleasePath(
+  repoSlug: string,
+  path: string,
+  opts: {userAgent?: string; timeoutMs?: number},
+): Promise<ChangelogEntry | undefined> {
+  const url = `https://api.github.com/repos/${repoSlug}/${path}`
   try {
     const res = await fetchWithTimeout(url, {
       timeoutMs: opts.timeoutMs ?? CHANGELOG_TIMEOUT_MS,

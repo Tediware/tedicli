@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # OIDC token for npm trusted publishing + provenance
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          if [ "$PKG_VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      # Trusted publishing (OIDC) requires npm >= 11.5.1.
+      - run: npm install -g npm@latest
+
+      - run: npm ci
+
+      - name: Guard against committed licensed X12 data
+        run: npm run check:licensed-data
+
+      - name: Type-check
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Verify publishable tarball
+        run: node scripts/release-preflight.mjs
+
+      # Create the GitHub Release first (idempotently). It is the source of
+      # `tedi update`'s changelog, and doing it before publish keeps a failed
+      # publish safely re-runnable instead of orphaning npm/Release state.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+
+      # No NODE_AUTH_TOKEN: authentication is handled by OIDC trusted publishing.
+      # access:public comes from publishConfig; --provenance is requested explicitly
+      # (it must NOT be forced via publishConfig, which would break local publishes).
+      - name: Publish to npm
+        run: npm publish --provenance --access public

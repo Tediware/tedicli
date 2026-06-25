@@ -57,3 +57,26 @@ npm test               # run tests
 By default the CLI runs against a synthetic mock backend so it works without a
 live server. Set `TEDI_API_MOCK=0` to target a real API base URL
 (`tedi config set api.baseUrl ...`).
+
+## Releasing (maintainers)
+
+Releases are tag-driven:
+
+```bash
+npm version <patch|minor|major>
+git push --follow-tags
+```
+
+A `v*` tag runs `.github/workflows/release.yml`, which tests, publishes to npm
+with provenance, and creates the GitHub Release.
+
+Publishing uses **npm trusted publishing (OIDC)** — there is no `NPM_TOKEN`
+secret. One-time setup, done once the package exists on npm:
+
+1. On npmjs.com → the `@tediware/tedi` package → Settings → Trusted Publisher,
+   add the GitHub repo `tediware/tedicli` and the workflow file `release.yml`.
+2. **Bootstrap the first publish.** OIDC generally cannot publish a brand-new
+   package name, so do the very first `npm publish --access public` once (locally
+   or with a temporary automation token), then rely on the workflow thereafter.
+   Don't pass `--provenance` for this manual publish — provenance is CI-only and
+   would fail locally; the release workflow adds it automatically.

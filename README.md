@@ -78,11 +78,14 @@ The config directory can be relocated with `TEDI_CONFIG_DIR`.
 ## Updating
 
 ```bash
-tedi update
+tedi update              # upgrade to the latest published version
+tedi update --version X  # install a specific version
 ```
 
-The CLI checks for updates in the background (throttled, cached) and shows a
-non-interrupting nudge when a newer version is available.
+`tedi update` reinstalls the CLI from npm (`npm install -g @tediware/tedi@latest`)
+and then prints the new version's changelog. The CLI also checks for updates in
+the background (throttled, cached) and shows a non-interrupting nudge when a newer
+version is available; you can always upgrade manually with `npm install -g @tediware/tedi`.
 
 ## Development
 
@@ -103,6 +106,20 @@ fully runnable without a live server. Set `TEDI_API_MOCK=0` to target a real API
 
 > **Note:** the mock backend's reference content is synthetic placeholder data for
 > development only. It is not licensed X12 reference content.
+
+## Releasing
+
+Releases are tag-driven. Bump the version and push the tag:
+
+```bash
+npm version <patch|minor|major>
+git push --follow-tags
+```
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds, tests,
+publishes to npm with provenance via OIDC trusted publishing (no stored token),
+and creates the GitHub Release whose notes power `tedi update`'s changelog. See
+[CONTRIBUTING.md](./CONTRIBUTING.md) for the one-time npm trusted-publisher setup.
 
 ## Contributing
 
