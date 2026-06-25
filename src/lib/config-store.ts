@@ -4,8 +4,11 @@
  * the persisted values so `TEDI_X12_RELEASE` etc. win without being written to disk.
  */
 
-import {readFile, writeFile, mkdir} from 'node:fs/promises'
-import {dirname, join} from 'node:path'
+import {readFile} from 'node:fs/promises'
+import {join} from 'node:path'
+
+import {writeFileAtomic} from './atomic-write.js'
+import {TediError} from './errors.js'
 
 export const DEFAULT_X12_RELEASE = '004010'
 export const DEFAULT_API_BASE_URL = 'https://api.tediware.com'
@@ -24,6 +27,15 @@ export type ConfigKey = keyof typeof CONFIG_KEYS
 
 export function isConfigKey(key: string): key is ConfigKey {
   return Object.prototype.hasOwnProperty.call(CONFIG_KEYS, key)
+}
+
+/** Throw a consistent, actionable error if `key` is not a known config key. */
+export function assertConfigKey(key: string): asserts key is ConfigKey {
+  if (!isConfigKey(key)) {
+    throw new TediError(`Unknown configuration key: ${key}`, {
+      suggestions: [`Valid keys: ${Object.keys(CONFIG_KEYS).join(', ')}`],
+    })
+  }
 }
 
 export class ConfigStore {
@@ -69,22 +81,29 @@ export class ConfigStore {
 
   private async load(): Promise<Record<string, string>> {
     if (this.cache) return this.cache
+    let raw: string
     try {
-      const raw = await readFile(this.file, 'utf8')
-      this.cache = JSON.parse(raw) as Record<string, string>
+      raw = await readFile(this.file, 'utf8')
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
         this.cache = {}
-      } else {
-        throw err
+        return this.cache
       }
+      throw err
+    }
+
+    try {
+      this.cache = JSON.parse(raw) as Record<string, string>
+    } catch {
+      throw new TediError(`The tedi config file is not valid JSON: ${this.file}`, {
+        suggestions: ['Fix the file by hand, or delete it to reset to defaults.'],
+      })
     }
     return this.cache
   }
 
   private async save(data: Record<string, string>): Promise<void> {
-    await mkdir(dirname(this.file), {recursive: true})
-    await writeFile(this.file, JSON.stringify(data, null, 2) + '\n', 'utf8')
+    await writeFileAtomic(this.file, JSON.stringify(data, null, 2) + '\n', 0o600)
     this.cache = data
   }
 }

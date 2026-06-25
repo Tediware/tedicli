@@ -6,7 +6,7 @@ export default class X12Releases extends BaseCommand<typeof X12Releases> {
   static examples = ['<%= config.bin %> x12 releases']
 
   async run(): Promise<void> {
-    const client = await this.getClient()
+    const client = await this.getAuthedClient()
     const releases = await client.x12Releases()
     const def = await this.configStore.get('x12.release')
 
