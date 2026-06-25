@@ -19,6 +19,7 @@
 
 import {OutputFormat} from './output.js'
 import {NotAuthenticatedError, TediError, TermsNotAcceptedError} from './errors.js'
+import {fetchWithTimeout} from './http.js'
 
 export interface ReferenceRequest {
   release: string
@@ -206,7 +207,7 @@ export class HttpApiClient implements ApiClient {
     url.searchParams.set('format', req.format)
     if (req.color) url.searchParams.set('color', 'true')
 
-    const res = await fetch(url, {headers: {authorization: `Bearer ${this.opts.token}`}})
+    const res = await fetchWithTimeout(url, {headers: {authorization: `Bearer ${this.opts.token}`}})
     this.assertOk(res)
 
     const body = await res.text()
@@ -227,7 +228,7 @@ export class HttpApiClient implements ApiClient {
 
   async x12Releases(): Promise<ReleaseInfo[]> {
     if (!this.opts.token) throw new NotAuthenticatedError()
-    const res = await fetch(`${this.base}/v1/x12/releases`, {
+    const res = await fetchWithTimeout(`${this.base}/v1/x12/releases`, {
       headers: {authorization: `Bearer ${this.opts.token}`},
     })
     this.assertOk(res)
@@ -236,7 +237,7 @@ export class HttpApiClient implements ApiClient {
 
   async whoami(): Promise<Identity> {
     if (!this.opts.token) throw new NotAuthenticatedError()
-    const res = await fetch(`${this.base}/v1/identity`, {
+    const res = await fetchWithTimeout(`${this.base}/v1/identity`, {
       headers: {authorization: `Bearer ${this.opts.token}`},
     })
     this.assertOk(res)
