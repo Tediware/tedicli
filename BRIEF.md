@@ -38,14 +38,16 @@ Positioning is human-developer-first. Agent use is not part of the documented su
 All commands require a Tediware API key.
 
 - **`tedi auth login` uses a browser device flow.** The CLI prints a URL and a short code; the user signs up (if needed), agrees to the EULA, and authorizes in the browser; the CLI polls and stores the resulting token. This handles signup, EULA consent, and key issuance in a single flow. The browser step is deliberate: it gives a real clickwrap EULA with recorded, auditable consent, which a pasted key cannot. Requires device-authorization endpoints server-side.
-- **Stopgap if device endpoints are not ready for v0:** accept a pasted key in `tedi auth login`, with signup and EULA handled on the web first. This is an explicit, temporary fallback to be upgraded to the device flow, not the target design.
+- **Stopgap if device endpoints are not ready for v0:** accept a pasted key in `tedi auth login`, with signup and EULA handled on the web first. This is an explicit, temporary fallback, retired once the device-authorization endpoints ship, not the target design.
+- **Reference access additionally requires accepted service terms.** Independent of how the key was obtained, the server checks on every reference request that the principal's account has accepted the current service terms, returning 403 otherwise. This keeps the EULA gate airtight even for the paste-key stopgap and when terms are updated.
+- `tedi whoami` and `tedi auth status` report the authenticated identity (organization, key scope) via an API-key-aware identity endpoint. The platform has no such endpoint today, so it is part of this auth work.
 - Tokens are stored in the OS keychain where available, falling back to a permissioned config file.
 - `tedi auth logout` clears stored credentials.
 
 ## Quota and metering
 
 - **X12 reference lookups are free and never count against the 800 tx/month developer tier.**
-- **They are rate-limited per account** to deter bulk scraping that would let someone reconstruct the licensed reference corpus through the API. The rate limit is set to be invisible to normal interactive use.
+- **They are rate-limited per account** to deter bulk scraping that would let someone reconstruct the licensed reference corpus through the API. The limit is set to be invisible to normal interactive use (starting at roughly 60/min and 1,000/day per key, tunable via config), with the existing IP and session throttles kept as a backstop.
 
 ## Command design
 
@@ -70,7 +72,7 @@ The most important property the grammar reflects: reference is global licensed k
 
 **Output, and the JSON ownership rule:** structured JSON availability tracks who owns the data.
 
-- Reference (the licensed X12 standard): presentation only, `--format console | markdown` (default `console`), mirroring the existing platform export. No JSON. `--json` returns an educational error rather than a flat failure ("X12 reference is available as `--format console` or `--format markdown`. Structured JSON isn't offered for licensed X12 reference data."). Console and markdown are presentations of the standard, not a re-ingestable data feed, which is the licensing-defensible posture. This is defense-in-depth and intent-signaling, not an airtight barrier; the real protection stays the EULA and the rate limit. Color for the `console` variant is rendered server-side (the renderer holds the structural context) and requested by the CLI only when stdout is an interactive terminal and `NO_COLOR`/`--no-color` are unset, so piped or redirected output stays clean. `markdown` is never colored.
+- Reference (the licensed X12 standard): presentation only, `--format console | markdown` (default `console`), mirroring the existing platform export. No JSON. `--json` returns an educational error rather than a flat failure ("X12 reference is available as `--format console` or `--format markdown`. Structured JSON isn't offered for licensed X12 reference data."). Console and markdown are presentations of the standard, not a re-ingestable data feed, which is the licensing-defensible posture. This is defense-in-depth and intent-signaling, not an airtight barrier; the real protection stays the EULA and the rate limit. The platform keeps JSON reference endpoints for its own web app; the CLI simply does not expose them and does not offer `--json`. Color for the `console` variant is rendered server-side (the renderer holds the structural context) and requested by the CLI only when stdout is an interactive terminal and `NO_COLOR`/`--no-color` are unset, so piped or redirected output stays clean. `markdown` is never colored.
 - Control and data plane (your own org data): `--json` everywhere, since it is your data and piping is the right developer affordance.
 
 **Release scoping (reference only):** every X12 lookup is implicitly scoped to a release (e.g. 004010, 005010), because the same id can differ across releases.
@@ -95,11 +97,11 @@ tedi x12 element <id>        # e.g. tedi x12 element 66
 tedi x12 releases            # list supported X12 releases
 ```
 
-All `x12` commands accept `--release / -r <id>` and `--format console | markdown` (see Command design).
+All `x12` commands accept `--release / -r <id>` and `--format console | markdown` (see Command design). The user types a bare transaction code (`856`); the server resolves it, and also still accepts the functional-group identifier (`SH856`).
 
 - **Element code lists are surfaced inside element output**, not as a separate top-level command in v1. (In X12, code values belong to elements, so `tedi x12 element 235` shows its valid codes.)
-- **Large code lists are truncated in console output** (`1,247 codes — showing 20; --format markdown for the full list`). Some elements carry thousands of codes; unbounded dumps hurt readability and are the scraping vector the rate limit defends against.
-- **Output:** colored `console` (an ASCII diagram) by default, or `markdown`. No JSON for reference data, per the ownership rule above.
+- **Large code lists are truncated in console output**, rendered server-side (for example `1,247 codes; showing 20. Use --format markdown for the full list.`). Some elements carry thousands of codes and unbounded dumps hurt readability. Truncation is a readability measure, not the scraping defense; that is the rate limit. `markdown` returns the full list.
+- **Output:** colored `console` (a box-drawing diagram) by default, or `markdown`. No JSON for reference data, per the ownership rule above.
 - **Reference scope (minimum):** segment definitions and element breakdowns, valid element values and code lists, and transaction-set loop structure.
 
 ## Update experience and changelog
@@ -125,7 +127,7 @@ tedi update
 tedi whoami
 ```
 
-Non-binding sketch for the Control and Data plane, shown so the grammar is known to absorb it (nouns reconciled against the platform's domain model when these ship):
+Non-binding sketch for the Control and Data plane, shown so the grammar is known to absorb it (nouns reconciled against the platform's domain model when these ship; in practice `transaction` likely maps to the platform's `edi_transmissions`, and `exchange` has no current resource):
 
 ```
 tedi connection  list | get | create | update | delete | test
@@ -137,99 +139,3 @@ tedi transaction list | get | logs
 ```
 
 Every topic must stay thin: logic and licensed data remain server-side behind the API.
-
-
-# Codex Review (2026-06-25)
-
-1. Summary
-
-The brief is directionally strong on product positioning and grammar, but several core implementation assumptions do not match the current codebase. The biggest mismatches are auth (X12 API is not API-key authenticated today), transaction lookup shape (`856` vs `SH856`), output contract (JSON is currently available for reference endpoints), and scraping controls (no console truncation, no per-account throttle). Confidence: medium-high, based on direct controller/model reads plus targeted spec runs and Rails runner checks.
-
-2. Claim verification
-
-- **Claim:** X12 reference is global licensed standard data, release-scoped.
-  - **Verdict:** Confirmed.
-  - **Evidence:** X12 models are scoped by `x12_release_id` and not org-bound (`app/models/x12/release.rb:4`, `app/models/x12/segment.rb:4`, `app/models/x12/element.rb:4`, `app/models/x12/transaction_set.rb:4`). API routes are release-scoped under `/api/x12/:release_id/...` (`config/routes.rb:215`).
-
-- **Claim:** `tedi x12 releases` can map to a server endpoint listing supported releases.
-  - **Verdict:** Confirmed.
-  - **Evidence:** `GET /api/x12/releases` exists (`config/routes.rb:213`, `app/controllers/api/x12/releases_controller.rb:4`). Local DB currently has `004010,004060,005010,006010,007010,008010` (command: `bundle exec rails runner 'puts X12::Release.order(:code).pluck(:code).join(",")'`).
-
-- **Claim:** `tedi x12 transaction 856` is a valid lookup shape.
-  - **Verdict:** Refuted (against current API).
-  - **Evidence:** transaction lookup currently uses identifier (`func_group + code`), not bare code (`app/controllers/api/x12/transaction_sets_controller.rb:60`, `app/models/x12/transaction_set.rb:23`, `app/models/x12/transaction_set.rb:27`). In current data, 856 resolves as `SH856` (command: `bundle exec rails runner '...find_by(code: "856")...puts "#{ts.func_group}#{ts.code}"'` output `SH856`).
-
-- **Claim:** Element code lists belong in element output, not a separate top-level command.
-  - **Verdict:** Confirmed.
-  - **Evidence:** element renderers include allowed codes (`app/services/x12_element_console_output_service.rb:37`, `app/services/x12_element_markdown_summary_service.rb:31`). JSON element serializer also includes code values for `ID` elements (`app/serializers/x12/element_serializer.rb:8`, `app/serializers/x12/element_serializer.rb:14`).
-
-- **Claim:** Large code lists are truncated in console output.
-  - **Verdict:** Refuted.
-  - **Evidence:** console renderer prints all codes with no truncation branch (`app/services/x12_element_console_output_service.rb:41`). In current data, element `008010/128` has `1905` codes and console output has `1918` lines (commands: max-code query and line-count query).
-
-- **Claim:** Reference output is presentation-only (`console|markdown`), no JSON.
-  - **Verdict:** Refuted (current server behavior).
-  - **Evidence:** `/api/x12/:release_id/{segments,elements,transaction_sets}` `show` endpoints return JSON (`app/controllers/api/x12/segments_controller.rb:28`, `app/controllers/api/x12/elements_controller.rb:30`, `app/controllers/api/x12/transaction_sets_controller.rb:28`). Index/search are also JSON (`app/controllers/api/x12/search_controller.rb:8`).
-
-- **Claim:** Console output includes release context in output.
-  - **Verdict:** Refuted.
-  - **Evidence:** renderers print code/name headers only, no release field (`app/services/x12_element_console_output_service.rb:11`, `app/services/x12_segment_console_output_service.rb:11`, `app/services/x12_transaction_set_console_output_service.rb:11`). Runner output starts with `98 - Entity Identifier Code` and `# 98 - Entity Identifier Code`.
-
-- **Claim:** All commands require API key auth.
-  - **Verdict:** Refuted (today).
-  - **Evidence:** `Api::X12::BaseController` skips auth globally (`app/controllers/api/x12/base_controller.rb:5`). X12 download requires signed-in session user (`Current.user`), not API key (`app/controllers/api/x12/base_controller.rb:22`). API-key auth is implemented in `Platform::BaseController` only (`app/controllers/platform/base_controller.rb:20`).
-
-- **Claim:** Browser device flow is the target auth path (requires server endpoints).
-  - **Verdict:** Unverifiable as implemented; practically absent in current server.
-  - **Evidence:** no device/oauth-style routes in `config/routes.rb` (grep for `device|oauth|authorization` returned no matches). Existing auth is session cookie (`app/controllers/concerns/authentication.rb:24`) plus manual API key management under authenticated web API (`app/controllers/api/api_keys_controller.rb:17`).
-
-- **Claim:** X12 lookups are free and do not count toward the 800 transmission limit.
-  - **Verdict:** Confirmed.
-  - **Evidence:** usage limit/billing calculations are based on `BillingEvent` type `edi_transmission` (`app/models/organization.rb:281`, `app/services/usage_report_service.rb:23`, `app/models/billing_event.rb:13`). X12 controllers do not create billing events. Transmission billing is created from `EdiTransmission` only (`app/models/edi_transmission.rb:133`).
-
-- **Claim:** X12 lookups are rate-limited per account.
-  - **Verdict:** Refuted.
-  - **Evidence:** current X12 throttles are per session cookie and per IP (`config/initializers/rack_attack.rb:151`, `config/initializers/rack_attack.rb:155`), not per account/API key id.
-
-- **Claim:** `tedi whoami` fits initial locked command set.
-  - **Verdict:** Unverifiable/likely blocked by current backend.
-  - **Evidence:** no `whoami` endpoint found in routes/controllers for API-key principal (grep for `whoami` returned none). `api/current_user` exists but is session-auth (`config/routes.rb:62`, `app/controllers/api/base_controller.rb:3`).
-
-- **Claim:** Reference boundary is global standard data, partner implementations are separate control-plane state.
-  - **Verdict:** Confirmed.
-  - **Evidence:** X12 reference lives in global `X12::*` models; partner/implementation resources are separate APIs (`config/routes.rb:158`, `config/routes.rb:178`, `app/models/x12/transaction_set.rb:4`).
-
-3. Risks and edge cases
-
-- Backend dependency risk: this CLI brief assumes API-key-authenticated reference lookups, but current X12 endpoints are session/anonymous patterns, so CLI implementation will stall unless server changes land first.
-- Licensing posture gap: ticket emphasizes account+EULA gating, but current reference endpoints still expose substantial JSON/list data without API key auth (`skip_before_action :require_authentication`), which weakens the stated defense model.
-- Scraping surface mismatch: no console truncation exists today, and some elements have very large code lists (1905 values), so a naive CLI can pull large corpus chunks quickly.
-- Transaction lookup ambiguity: brief uses bare transaction code (`856`), while existing identifiers are functional-group prefixed (`SH856`), leading to avoidable 404s unless normalized server-side or client-side.
-- Output contract mismatch: brief says presentation-only with optional color; current download endpoints are file attachments and render plain text/markdown only, with no color control.
-- Future control/data-plane command risk: grammar includes `exchange`, but there is no first-class Exchange model/resource in current API (`edi_transmissions` exists instead), so noun drift is likely.
-
-4. Gaps in the ticket
-
-- Missing explicit backend prerequisites: no linked server ticket/acceptance criteria for API-key X12 auth, text-inline responses, transaction code resolution, and release echo.
-- Missing auth contract details: token type (API key vs device token), validation endpoint for `auth status`/`whoami`, and sandbox-key behavior are not defined.
-- Missing error contract: CLI-facing behavior for 401/403/404/429 is described informally, but server response formats are currently mixed JSON/text and not standardized for CLI consumption.
-- Missing rollout plan for stopgap auth: no trigger/date to retire pasted-key login, no compatibility expectations between stopgap and device flow.
-- Missing acceptance criteria for anti-scrape controls: target rate-limit values, truncation thresholds, and whether `markdown` should also be bounded are unspecified.
-
-5. Implementation considerations
-
-- Treat this as a two-repo effort: backend API contract first, then CLI. The existing `ai/tickets/x12-reference-api.md` already captures most required backend deltas and should be reconciled with this brief.
-- Prefer explicit endpoint contract tests before CLI work: request specs for auth mode, content type, `variant`, `color`, 404/429 bodies, and bare transaction-code lookup.
-- Keep tenancy boundaries strict as CLI expands: reference commands can be global, but control/data plane commands should map to `/platform` API-key endpoints to preserve org scoping.
-- Define noun mapping now for planned commands: `transaction` probably maps to `edi_transmissions`; `exchange` currently has no direct resource and needs a product/API decision.
-- Add release context in renderer output if required by the brief; this is currently absent in all three reference renderers.
-
-6. Open questions / anything else relevant
-
-- Should reference lookups be API-key required for CLI only, or should web anonymous previews remain as-is? If both stay, clarify exactly what payload tier is public vs gated.
-- For `tedi x12 transaction <id>`, should `<id>` be bare code (`856`), identifier (`SH856`), or both accepted?
-- What is the source of truth for `whoami` under API-key auth?
-- Should per-account rate limiting key on API key id, organization id, or both (plus IP backstop)?
-- Do we want to keep JSON reference endpoints for web app internals while refusing CLI `--json`, or remove/restrict JSON server-side for consistency with the licensing stance?
-- Validation run completed: `bundle exec rspec spec/controllers/api/x12/elements_controller_spec.rb spec/controllers/api/x12/segments_controller_spec.rb spec/controllers/api/x12/transaction_sets_controller_spec.rb spec/config/rack_attack_spec.rb` passed (`41 examples, 0 failures`).
-
