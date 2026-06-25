@@ -1,0 +1,77 @@
+{
+  "name": "@tediware/tedi",
+  "version": "0.0.0",
+  "description": "Official command-line client for the Tediware platform. Thin client over the Tediware API; first capability is X12 reference lookup.",
+  "keywords": [
+    "tediware",
+    "tedi",
+    "x12",
+    "edi",
+    "cli"
+  ],
+  "homepage": "https://github.com/tediware/tedicli",
+  "bugs": "https://github.com/tediware/tedicli/issues",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tediware/tedicli.git"
+  },
+  "license": "Apache-2.0",
+  "author": "Tediware",
+  "type": "module",
+  "exports": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "tedi": "./bin/run.js"
+  },
+  "files": [
+    "/bin",
+    "/dist",
+    "/oclif.manifest.json",
+    "/NOTICE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@oclif/core": "^4",
+    "@oclif/plugin-help": "^6",
+    "@oclif/plugin-update": "^4",
+    "chalk": "^5"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "oclif": "^4",
+    "tsx": "^4",
+    "typescript": "^5"
+  },
+  "oclif": {
+    "bin": "tedi",
+    "dirname": "tedi",
+    "commands": "./dist/commands",
+    "topicSeparator": " ",
+    "plugins": [
+      "@oclif/plugin-help",
+      "@oclif/plugin-update"
+    ],
+    "topics": {
+      "auth": {
+        "description": "Authenticate with the Tediware platform and inspect credentials."
+      },
+      "config": {
+        "description": "Read and write local tedi configuration."
+      },
+      "x12": {
+        "description": "Look up the X12 reference standard (segments, elements, transaction sets)."
+      }
+    }
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -b",
+    "lint": "tsc --noEmit",
+    "check:licensed-data": "node scripts/check-no-licensed-data.mjs",
+    "postpack": "rm -f oclif.manifest.json",
+    "prepack": "npm run build && oclif manifest",
+    "test": "node --import tsx --test test/*.test.ts",
+    "version": "oclif readme && git add README.md"
+  }
+}
