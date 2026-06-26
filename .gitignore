@@ -21,3 +21,6 @@ npm-debug.log*
 # Local env
 .env
 .env.local
+
+# Personal, machine-local notes (not shared)
+*.local.md
