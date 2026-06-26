@@ -13,10 +13,12 @@ export default class X12Releases extends BaseCommand<typeof X12Releases> {
     this.log('Supported X12 releases:')
     this.log('')
     for (const r of releases) {
-      const marker = r.id === def ? '*' : ' '
-      this.log(`  ${marker} ${r.id}  ${r.description}`)
+      const marker = r.code === def ? '*' : ' '
+      const label = r.name ?? `Release ${r.code}`
+      const hipaa = r.hipaa ? '  (HIPAA)' : ''
+      this.log(`  ${marker} ${r.code}  ${label}${hipaa}`)
     }
     this.log('')
-    this.log(`  * current default (${def}). Change with \`tedi config set x12.release <id>\`.`)
+    this.log(`  * current default (${def}). Change with \`tedi config set x12.release <code>\`.`)
   }
 }

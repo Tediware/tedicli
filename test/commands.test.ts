@@ -93,6 +93,37 @@ describe('commands (authenticated)', () => {
   })
 })
 
+describe('commands against the real client when identity is unavailable', () => {
+  // The HTTP client's whoami throws IdentityUnavailableError before any network
+  // call, so these run hermetically with the mock disabled and no live server.
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await makeConfigDir(true)
+    process.env.TEDI_CONFIG_DIR = dir
+    process.env.TEDI_API_MOCK = '0'
+  })
+
+  afterEach(async () => {
+    delete process.env.TEDI_CONFIG_DIR
+    delete process.env.TEDI_API_MOCK
+    await rm(dir, {recursive: true, force: true})
+  })
+
+  it('whoami degrades to reporting the locally-stored key', async () => {
+    const {stdout, error} = await run(['whoami'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /key is stored \(\.\.\.1234\)/)
+    assert.match(stdout, /not available yet/i)
+  })
+
+  it('auth status confirms a stored key without the identity endpoint', async () => {
+    const {stdout, error} = await run(['auth', 'status'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Signed in \(key \.\.\.1234\)/)
+  })
+})
+
 describe('commands (unauthenticated)', () => {
   let dir: string
 

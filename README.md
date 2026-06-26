@@ -71,7 +71,7 @@ tedi config set x12.release 005010
 | Key           | Env override          | Default                     |
 | ------------- | --------------------- | --------------------------- |
 | `x12.release` | `TEDI_X12_RELEASE`    | `004010`                    |
-| `api.baseUrl` | `TEDI_API_BASE_URL`   | `https://api.tediware.com`  |
+| `api.baseUrl` | `TEDI_API_BASE_URL`   | `https://tediware.com`      |
 
 The config directory can be relocated with `TEDI_CONFIG_DIR`.
 
@@ -102,7 +102,15 @@ npm run check:licensed-data   # licensed-data tripwire (also runs in CI)
 ```
 
 By default the CLI runs against a synthetic mock backend, so a fresh checkout is
-fully runnable without a live server. Set `TEDI_API_MOCK=0` to target a real API.
+fully runnable without a live server. To target a real server (the HTTP contract
+is documented in [`API.md`](API.md)):
+
+```bash
+export TEDI_API_MOCK=0
+tedi config set api.baseUrl http://localhost:5004   # or your host
+tedi auth login --key <api-key>                     # paste-key stopgap
+tedi x12 releases
+```
 
 > **Note:** the mock backend's reference content is synthetic placeholder data for
 > development only. It is not licensed X12 reference content.

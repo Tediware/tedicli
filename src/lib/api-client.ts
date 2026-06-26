@@ -10,15 +10,26 @@
  *                         runnable before the server endpoints exist. The mock data
  *                         here is invented for development and is NOT licensed X12
  *                         reference content.
- *   - `HttpApiClient`   — real HTTP skeleton. Reference/identity calls hit the
- *                         platform; auth device-flow endpoints throw until they ship.
+ *   - `HttpApiClient`   — real HTTP client implementing the contract in `API.md`.
+ *                         Reference and releases calls hit the platform; identity
+ *                         and device-flow endpoints don't exist server-side yet and
+ *                         throw a clear "not available yet" error.
  *
  * `createApiClient` selects between them. The mock is the default so a fresh
- * checkout works out of the box; set `TEDI_API_MOCK=0` to force the HTTP client.
+ * checkout works out of the box; set `TEDI_API_MOCK=0` to target a real server
+ * (e.g. local `http://localhost:5004` via `tedi config set api.baseUrl`).
  */
 
 import {OutputFormat} from './output.js'
-import {NotAuthenticatedError, TediError, TermsNotAcceptedError} from './errors.js'
+import {
+  AccountUnavailableError,
+  IdentityUnavailableError,
+  NotAuthenticatedError,
+  NotFoundError,
+  RateLimitedError,
+  TediError,
+  TermsNotAcceptedError,
+} from './errors.js'
 import {fetchWithTimeout} from './http.js'
 
 export interface ReferenceRequest {
@@ -36,8 +47,12 @@ export interface RenderedReference {
 }
 
 export interface ReleaseInfo {
-  id: string
-  description: string
+  /** Release code, e.g. `004010`. This is what the CLI keys on, not the numeric id. */
+  code: string
+  /** Human-readable name, or null when the server hasn't set one. */
+  name: string | null
+  /** Whether this release is a HIPAA-designated version. */
+  hipaa: boolean
 }
 
 export interface Identity {
@@ -84,10 +99,11 @@ export interface ApiClientOptions {
 // Mock implementation
 // ---------------------------------------------------------------------------
 
+// Newest first, mirroring the server's ordering. Synthetic development data.
 const MOCK_RELEASES: ReleaseInfo[] = [
-  {id: '004010', description: 'ASC X12 version 004010'},
-  {id: '005010', description: 'ASC X12 version 005010'},
-  {id: '006020', description: 'ASC X12 version 006020'},
+  {code: '006020', name: 'Release 006020', hipaa: false},
+  {code: '005010', name: 'Release 005010', hipaa: true},
+  {code: '004010', name: 'Release 004010', hipaa: false},
 ]
 
 /**
@@ -179,10 +195,34 @@ export class MockApiClient implements ApiClient {
 // HTTP implementation (skeleton)
 // ---------------------------------------------------------------------------
 
+/** The reference resources and how they map to a path segment and a noun for errors. */
+const REFERENCE_RESOURCES = {
+  segment: 'segments',
+  element: 'elements',
+  transaction: 'transaction_sets',
+} as const
+
+type ReferenceKind = keyof typeof REFERENCE_RESOURCES
+
+/** Shape of an entry in the `releases` response (`data.releases[]`). */
+interface RawRelease {
+  id: number
+  code: string
+  name: string | null
+  hipaa: boolean
+  published_at: string | null
+}
+
 /**
- * Real HTTP client. Reference and identity calls are implemented against the
- * documented surface; device-authorization endpoints throw until the server ships
- * them (see the auth section of the brief).
+ * Real HTTP client, implementing the contract in `API.md`:
+ *   - endpoints live under `<base>/api/x12`, no version prefix, all GET;
+ *   - auth header is `Authorization: Key <api_key>`;
+ *   - the release is part of the path, and the output format is the `variant` query;
+ *   - errors are mapped from the HTTP status (see the error table in API.md).
+ *
+ * The identity (`whoami`) and device-authorization endpoints do not exist yet, so
+ * those methods throw a clear "not available yet" error (see API.md "Not available
+ * yet"). The paste-key stopgap (`tedi auth login --key`) is the supported path.
  */
 export class HttpApiClient implements ApiClient {
   readonly isMock = false
@@ -193,55 +233,104 @@ export class HttpApiClient implements ApiClient {
     return this.opts.baseUrl.replace(/\/$/, '')
   }
 
-  /** Map common error statuses to actionable errors, consistently across calls. */
-  private assertOk(res: Response): void {
-    if (res.status === 401) throw new NotAuthenticatedError()
-    if (res.status === 403) throw new TermsNotAcceptedError()
-    if (!res.ok) throw new TediError(`Tediware API request failed (${res.status} ${res.statusText}).`)
+  /** API.md: every request authenticates with `Authorization: Key <api_key>`. */
+  private authHeaders(): Record<string, string> {
+    return this.opts.token ? {authorization: `Key ${this.opts.token}`} : {}
   }
 
-  private async reference(path: string, req: ReferenceRequest): Promise<RenderedReference> {
+  /** Best-effort extraction of the server's error message (string or `{code,message}`). */
+  private async readErrorMessage(res: Response): Promise<string> {
+    try {
+      const body = (await res.json()) as {error?: unknown}
+      const err = body?.error
+      if (typeof err === 'string') return err
+      if (err && typeof err === 'object' && typeof (err as {message?: unknown}).message === 'string') {
+        return (err as {message: string}).message
+      }
+    } catch {
+      // Non-JSON or empty body; fall through to a generic message.
+    }
+    return ''
+  }
+
+  /**
+   * Map a non-2xx response to an actionable error, branching on the status code
+   * (per API.md, the 429 body shape differs, so never branch on the body). `ctx`
+   * supplies the resource for a contextual 404 message.
+   */
+  private async throwForStatus(res: Response, ctx?: {kind: ReferenceKind; code: string; release: string}): Promise<never> {
+    switch (res.status) {
+      case 401:
+        throw new NotAuthenticatedError()
+      case 403: {
+        const msg = await this.readErrorMessage(res)
+        // Two distinct 403s: unaccepted service terms vs. a disabled organization.
+        if (/terms/i.test(msg)) throw new TermsNotAcceptedError()
+        throw new AccountUnavailableError()
+      }
+      case 404:
+        if (ctx) throw new NotFoundError(ctx.kind, ctx.code, ctx.release)
+        throw new TediError('Record not found.')
+      case 429: {
+        const header = res.headers.get('retry-after')
+        const retry = header === null ? undefined : Number(header)
+        throw new RateLimitedError(Number.isFinite(retry) ? retry : undefined)
+      }
+      default: {
+        const msg = await this.readErrorMessage(res)
+        const detail = msg ? `: ${msg}` : ''
+        throw new TediError(`Tediware API request failed (${res.status} ${res.statusText})${detail}.`)
+      }
+    }
+  }
+
+  private async reference(kind: ReferenceKind, code: string, req: ReferenceRequest): Promise<RenderedReference> {
     if (!this.opts.token) throw new NotAuthenticatedError()
-    const url = new URL(`${this.base}${path}`)
-    url.searchParams.set('release', req.release)
-    url.searchParams.set('format', req.format)
+    const resource = REFERENCE_RESOURCES[kind]
+    const url = new URL(
+      `${this.base}/api/x12/${encodeURIComponent(req.release)}/${resource}/${encodeURIComponent(code)}/download`,
+    )
+    // The CLI always sends an explicit variant (the server would otherwise default
+    // to markdown). `color` is only meaningful for the console variant.
+    url.searchParams.set('variant', req.format)
     if (req.color) url.searchParams.set('color', 'true')
 
-    const res = await fetchWithTimeout(url, {headers: {authorization: `Bearer ${this.opts.token}`}})
-    this.assertOk(res)
+    const res = await fetchWithTimeout(url, {headers: this.authHeaders()})
+    if (!res.ok) await this.throwForStatus(res, {kind, code, release: req.release})
 
     const body = await res.text()
     return {release: req.release, format: req.format, body}
   }
 
   x12Segment(id: string, req: ReferenceRequest): Promise<RenderedReference> {
-    return this.reference(`/v1/x12/segments/${encodeURIComponent(id)}`, req)
+    return this.reference('segment', id, req)
   }
 
   x12Element(id: string, req: ReferenceRequest): Promise<RenderedReference> {
-    return this.reference(`/v1/x12/elements/${encodeURIComponent(id)}`, req)
+    return this.reference('element', id, req)
   }
 
   x12Transaction(id: string, req: ReferenceRequest): Promise<RenderedReference> {
-    return this.reference(`/v1/x12/transactions/${encodeURIComponent(id)}`, req)
+    return this.reference('transaction', id, req)
   }
 
   async x12Releases(): Promise<ReleaseInfo[]> {
-    if (!this.opts.token) throw new NotAuthenticatedError()
-    const res = await fetchWithTimeout(`${this.base}/v1/x12/releases`, {
-      headers: {authorization: `Bearer ${this.opts.token}`},
-    })
-    this.assertOk(res)
-    return (await res.json()) as ReleaseInfo[]
+    // `releases` is reachable without a key, but API.md asks us to send the header
+    // anyway so usage counts against the per-key limit rather than only the per-IP one.
+    const res = await fetchWithTimeout(`${this.base}/api/x12/releases`, {headers: this.authHeaders()})
+    if (!res.ok) await this.throwForStatus(res)
+    const payload = (await res.json()) as {data?: {releases?: RawRelease[]}}
+    return (payload.data?.releases ?? []).map((r) => ({
+      code: r.code,
+      name: r.name ?? null,
+      hipaa: Boolean(r.hipaa),
+    }))
   }
 
   async whoami(): Promise<Identity> {
-    if (!this.opts.token) throw new NotAuthenticatedError()
-    const res = await fetchWithTimeout(`${this.base}/v1/identity`, {
-      headers: {authorization: `Bearer ${this.opts.token}`},
-    })
-    this.assertOk(res)
-    return (await res.json()) as Identity
+    // The identity endpoint doesn't exist server-side yet (API.md). Throw a typed
+    // error so the whoami/auth-status commands can degrade gracefully.
+    throw new IdentityUnavailableError()
   }
 
   async startDeviceAuth(): Promise<DeviceAuthStart> {
@@ -251,7 +340,9 @@ export class HttpApiClient implements ApiClient {
   }
 
   async pollDeviceAuth(_deviceCode: string): Promise<DeviceAuthPoll> {
-    throw new TediError('Device-authorization endpoints are not available yet.')
+    throw new TediError('Device-authorization endpoints are not available yet.', {
+      suggestions: ['Use the paste-key stopgap: `tedi auth login --key <api-key>`.'],
+    })
   }
 }
 
@@ -260,10 +351,12 @@ export class HttpApiClient implements ApiClient {
 // ---------------------------------------------------------------------------
 
 /**
- * Whether the mock client should be used. Mock is the default in the scaffold
- * (the real reference endpoints don't exist yet); disable it with any common
- * falsy value, e.g. `TEDI_API_MOCK=0` or `TEDI_API_MOCK=false`. This default
- * should flip to the HTTP client once the server endpoints ship.
+ * Whether the mock client should be used. Mock is still the default so a fresh
+ * checkout (and the test suite) runs without a live server or a real API key.
+ * Disable it with any common falsy value — `TEDI_API_MOCK=0`, `false`, `no`,
+ * `off` — to hit the real API described in `API.md`. (Flipping this default to
+ * HTTP is a release decision: it needs the auth/identity endpoints, which aren't
+ * built yet, and a configured key.)
  */
 export function useMock(): boolean {
   const value = (process.env.TEDI_API_MOCK ?? '').trim().toLowerCase()

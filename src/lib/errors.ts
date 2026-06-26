@@ -51,3 +51,61 @@ export class TermsNotAcceptedError extends TediError {
     this.name = 'TermsNotAcceptedError'
   }
 }
+
+/** Raised on a 403 when the key's organization has been disabled. */
+export class AccountUnavailableError extends TediError {
+  constructor() {
+    super('This account is unavailable.', {
+      suggestions: ['Contact Tediware support if you believe this is in error.'],
+      exitCode: 1,
+    })
+    this.name = 'AccountUnavailableError'
+  }
+}
+
+/** Raised on a 404 for an unknown release/segment/element/transaction code. */
+export class NotFoundError extends TediError {
+  constructor(kind: string, code: string, release: string) {
+    super(`No ${kind} '${code}' in release ${release}.`, {
+      suggestions: [`Run \`tedi x12 releases\` to list releases, or double-check the ${kind} code.`],
+      exitCode: 1,
+    })
+    this.name = 'NotFoundError'
+  }
+}
+
+/** Raised on a 429. Carries the server's Retry-After hint (whole seconds) when present. */
+export class RateLimitedError extends TediError {
+  readonly retryAfterSeconds?: number
+
+  constructor(retryAfterSeconds?: number) {
+    const wait =
+      retryAfterSeconds !== undefined && retryAfterSeconds > 0 ? ` Try again in ${retryAfterSeconds}s.` : ''
+    // Don't quote specific limits: they're server-side and tunable, and the CLI
+    // can't see the counters — only the 429 and the Retry-After hint.
+    super(`Rate limit exceeded.${wait}`, {
+      suggestions: ["You're sending requests too quickly; wait a moment before retrying."],
+      exitCode: 1,
+    })
+    this.name = 'RateLimitedError'
+    this.retryAfterSeconds = retryAfterSeconds
+  }
+}
+
+/**
+ * Raised when the identity/whoami endpoint is requested but does not exist yet
+ * (see API.md "Not available yet"). Commands catch this to degrade gracefully
+ * rather than failing — the CLI still knows a key is stored locally.
+ */
+export class IdentityUnavailableError extends TediError {
+  constructor() {
+    super('The identity endpoint is not available yet.', {
+      suggestions: [
+        'Identity/whoami ships with the device-flow auth work (see API.md).',
+        'To confirm a key actually authenticates, run `tedi x12 releases`.',
+      ],
+      exitCode: 1,
+    })
+    this.name = 'IdentityUnavailableError'
+  }
+}
