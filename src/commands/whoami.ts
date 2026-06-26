@@ -7,7 +7,9 @@ export default class Whoami extends BaseCommand<typeof Whoami> {
   static examples = ['<%= config.bin %> whoami']
 
   async run(): Promise<void> {
-    const stored = await this.credentials.get()
+    // getAuthedClient throws NotAuthenticatedError when neither env nor stored key
+    // is present, so cred is guaranteed defined in the success and degraded paths.
+    const cred = await this.resolveCredentials()
     const client = await this.getAuthedClient()
     try {
       const id = await client.whoami()
@@ -15,7 +17,7 @@ export default class Whoami extends BaseCommand<typeof Whoami> {
     } catch (err) {
       // No identity endpoint yet: report the locally-known key rather than failing.
       if (!(err instanceof IdentityUnavailableError)) throw err
-      this.log(`A key is stored (...${stored!.token.slice(-4)}), but identity details are not available yet.`)
+      this.log(`A key is present (...${cred!.token.slice(-4)}), but identity details are not available yet.`)
       this.log('Run `tedi x12 releases` to verify the key authenticates.')
     }
   }

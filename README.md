@@ -15,7 +15,7 @@ npm install -g @tediware/tedi
 ## Quick start
 
 ```bash
-tedi auth login            # authenticate in the browser (device flow)
+tedi auth login            # paste your API key (entered without echo)
 tedi x12 segment N1        # look up an X12 segment
 tedi x12 transaction 856   # look up a transaction set
 tedi x12 element 235       # look up an element and its code list
@@ -23,20 +23,29 @@ tedi x12 element 235       # look up an element and its code list
 
 ## Authentication
 
-All commands require a Tediware API key.
+All commands require a Tediware API key. Create one in the Tediware dashboard
+(sign up and accept the service terms there first), then provide it to the CLI.
+The key is never passed as a command-line flag, so it can't leak into shell
+history or process listings.
 
 ```bash
-tedi auth login            # browser device flow: signup, EULA consent, key issuance
-tedi auth login --key ...  # stopgap: store a pre-issued key (signup + EULA on the web first)
+tedi auth login            # prompts for the key with no echo, then stores it
+cat key.txt | tedi auth login   # or pipe it in (CI/non-interactive)
+export TEDI_API_KEY=...    # or set it in the environment (one-off / CI; no login needed)
+
 tedi auth status           # show whether you're signed in
-tedi whoami                # show the authenticated identity
+tedi whoami                # show the authenticated identity (when available)
 tedi auth logout           # clear stored credentials
 ```
 
-Credentials are stored in a permissioned file in the CLI config directory today;
-OS-keychain storage is a planned drop-in. X12 reference access additionally
-requires that your account has accepted the current Tediware service terms; the
-server enforces this on every request.
+`TEDI_API_KEY` overrides any stored key at request time. Stored credentials live
+in a permissioned file in the CLI config directory today; OS-keychain storage is a
+planned drop-in. X12 reference access additionally requires that your account has
+accepted the current Tediware service terms; the server enforces this on every
+request.
+
+> A browser device-flow login is the eventual destination but is deferred; it will
+> slot in under the same stored-key model without changing how you use the CLI.
 
 ## X12 reference
 
@@ -108,7 +117,7 @@ is documented in [`API.md`](API.md)):
 ```bash
 export TEDI_API_MOCK=0
 tedi config set api.baseUrl http://localhost:5004   # or your host
-tedi auth login --key <api-key>                     # paste-key stopgap
+export TEDI_API_KEY=<api-key>                        # or `tedi auth login`
 tedi x12 releases
 ```
 

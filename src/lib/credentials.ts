@@ -14,6 +14,13 @@ import {join} from 'node:path'
 
 import {writeFileAtomic} from './atomic-write.js'
 
+/**
+ * Environment variable that supplies an API key without `tedi auth login`. It
+ * overrides any stored credential at request time — useful for CI and one-off
+ * use. Setting it does not persist anything; `auth login` persists separately.
+ */
+export const API_KEY_ENV = 'TEDI_API_KEY'
+
 export interface StoredCredentials {
   token: string
 }

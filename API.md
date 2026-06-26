@@ -20,8 +20,17 @@ See `BRIEF.md` for product intent, command grammar, and the licensing posture.
 ## Authentication
 
 - Header: `Authorization: Key <api_key>`.
-- The key is obtained out of band (browser device flow, or a pasted key as the
-  stopgap); see `BRIEF.md`. This document assumes the CLI already holds a key.
+- The key is obtained out of band; see `BRIEF.md`. This document assumes the CLI
+  already holds a key. The shipping mechanism for v0 is the pasted-key stopgap:
+  the user creates a key in the dashboard, and `tedi auth login` prompts for it
+  with no echo (never via a flag or argv). The browser device flow is the
+  deferred destination; it swaps in later under the same `Authorization: Key`
+  credential model, so nothing about how the CLI stores or sends the key changes.
+- Reference reads require no scope: any valid key reads reference, which is the
+  floor beneath the platform's data and control planes. The CLI does nothing
+  scope-related today. The scope model is server-authoritative and documented in
+  the tediware repo at `doc/architecture/api_authentication.md`; treat that as
+  canonical rather than re-deriving it here.
 - The three `download` endpoints require the header. `releases` is reachable
   without it, but the CLI should send the header on every request anyway, so
   usage counts against the per-key rate limit rather than only the per-IP one.
@@ -207,8 +216,11 @@ curl -H "Authorization: Key $TEDI_API_KEY" \
 
 ## Not available yet (do not build against)
 
-- A `whoami` / identity endpoint for an API-key principal. It does not exist;
-  it is part of the auth/device-flow work.
+- A `whoami` / identity endpoint for an API-key principal. It does not exist yet;
+  it is deferred auth work. When built it will live in the platform's `Platform`
+  API namespace and return principal metadata only (organization, scope,
+  service-terms state, key label). Until then, validate a key by making a real
+  request and reading the status code, not by calling `whoami`.
 - Any control-plane or data-plane endpoints (connections, partners, mappings,
   flows, transmissions). The command grammar in `BRIEF.md` sketches these, but
   they are not built.
