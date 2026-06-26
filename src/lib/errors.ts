@@ -101,7 +101,7 @@ export class IdentityUnavailableError extends TediError {
   constructor() {
     super('The identity endpoint is not available yet.', {
       suggestions: [
-        'Identity/whoami ships with the device-flow auth work (see API.md).',
+        'Identity/whoami is deferred auth work (see API.md).',
         'To confirm a key actually authenticates, run `tedi x12 releases`.',
       ],
       exitCode: 1,

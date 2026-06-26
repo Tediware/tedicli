@@ -1,4 +1,5 @@
 import {BaseCommand} from '../../base-command.js'
+import {API_KEY_ENV} from '../../lib/credentials.js'
 import {IdentityUnavailableError} from '../../lib/errors.js'
 
 export default class AuthStatus extends BaseCommand<typeof AuthStatus> {
@@ -7,8 +8,8 @@ export default class AuthStatus extends BaseCommand<typeof AuthStatus> {
   static examples = ['<%= config.bin %> auth status']
 
   async run(): Promise<void> {
-    const stored = await this.credentials.get()
-    if (!stored) {
+    const cred = await this.resolveCredentials()
+    if (!cred) {
       this.log('Not signed in. Run `tedi auth login` to authenticate.')
       return
     }
@@ -21,10 +22,11 @@ export default class AuthStatus extends BaseCommand<typeof AuthStatus> {
       this.log(`  Key scope:    ${id.keyScope}`)
       this.log(`  Key:          ...${id.keyHint}`)
     } catch (err) {
-      // The identity endpoint isn't available yet: still confirm a key is stored,
-      // using the locally-held token for the hint, rather than failing outright.
+      // The identity endpoint isn't available yet: still confirm a key is present,
+      // using the locally-known token for the hint, rather than failing outright.
       if (!(err instanceof IdentityUnavailableError)) throw err
-      this.log(`Signed in (key ...${stored.token.slice(-4)}).`)
+      const via = cred.source === 'env' ? ` (from ${API_KEY_ENV})` : ''
+      this.log(`Signed in (key ...${cred.token.slice(-4)})${via}.`)
       this.log('Identity details are not available yet; run `tedi x12 releases` to verify the key works.')
     }
   }

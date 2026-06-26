@@ -187,9 +187,5 @@ describe('HttpApiClient', () => {
     it('whoami throws a not-available error', async () => {
       await assert.rejects(client('sk-test').whoami(), /identity endpoint is not available/i)
     })
-
-    it('device auth throws a not-available error', async () => {
-      await assert.rejects(client('sk-test').startDeviceAuth(), /not available yet/i)
-    })
   })
 })

@@ -11,9 +11,9 @@
  *                         here is invented for development and is NOT licensed X12
  *                         reference content.
  *   - `HttpApiClient`   — real HTTP client implementing the contract in `API.md`.
- *                         Reference and releases calls hit the platform; identity
- *                         and device-flow endpoints don't exist server-side yet and
- *                         throw a clear "not available yet" error.
+ *                         Reference and releases calls hit the platform; the
+ *                         identity endpoint doesn't exist server-side yet and
+ *                         throws a clear "not available yet" error.
  *
  * `createApiClient` selects between them. The mock is the default so a fresh
  * checkout works out of the box; set `TEDI_API_MOCK=0` to target a real server
@@ -62,23 +62,6 @@ export interface Identity {
   keyHint: string
 }
 
-export interface DeviceAuthStart {
-  deviceCode: string
-  userCode: string
-  verificationUri: string
-  /** Suggested polling interval in seconds. */
-  interval: number
-  /** Seconds until the device code expires. */
-  expiresIn: number
-}
-
-export type DeviceAuthPoll =
-  | {status: 'pending'}
-  | {status: 'slow_down'}
-  | {status: 'complete'; token: string}
-  | {status: 'expired'}
-  | {status: 'denied'}
-
 export interface ApiClient {
   readonly isMock: boolean
   x12Segment(id: string, req: ReferenceRequest): Promise<RenderedReference>
@@ -86,8 +69,6 @@ export interface ApiClient {
   x12Transaction(id: string, req: ReferenceRequest): Promise<RenderedReference>
   x12Releases(): Promise<ReleaseInfo[]>
   whoami(): Promise<Identity>
-  startDeviceAuth(): Promise<DeviceAuthStart>
-  pollDeviceAuth(deviceCode: string): Promise<DeviceAuthPoll>
 }
 
 export interface ApiClientOptions {
@@ -174,21 +155,6 @@ export class MockApiClient implements ApiClient {
     this.requireToken()
     return {organization: 'Acme EDI (dev)', keyScope: 'reference:read', keyHint: this.opts.token!.slice(-4)}
   }
-
-  async startDeviceAuth(): Promise<DeviceAuthStart> {
-    return {
-      deviceCode: 'mock-device-code',
-      userCode: 'WXYZ-1234',
-      verificationUri: `${this.opts.baseUrl.replace(/\/$/, '')}/device`,
-      interval: 1,
-      expiresIn: 300,
-    }
-  }
-
-  async pollDeviceAuth(_deviceCode: string): Promise<DeviceAuthPoll> {
-    // The mock authorizes immediately so the login flow completes end to end.
-    return {status: 'complete', token: 'mock-tedi-token-abcd'}
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -220,9 +186,9 @@ interface RawRelease {
  *   - the release is part of the path, and the output format is the `variant` query;
  *   - errors are mapped from the HTTP status (see the error table in API.md).
  *
- * The identity (`whoami`) and device-authorization endpoints do not exist yet, so
- * those methods throw a clear "not available yet" error (see API.md "Not available
- * yet"). The paste-key stopgap (`tedi auth login --key`) is the supported path.
+ * The identity (`whoami`) endpoint does not exist yet, so that method throws a
+ * clear "not available yet" error (see API.md "Not available yet"). Keys are
+ * obtained out of band and provided via `tedi auth login` or `TEDI_API_KEY`.
  */
 export class HttpApiClient implements ApiClient {
   readonly isMock = false
@@ -331,18 +297,6 @@ export class HttpApiClient implements ApiClient {
     // The identity endpoint doesn't exist server-side yet (API.md). Throw a typed
     // error so the whoami/auth-status commands can degrade gracefully.
     throw new IdentityUnavailableError()
-  }
-
-  async startDeviceAuth(): Promise<DeviceAuthStart> {
-    throw new TediError('Device-authorization endpoints are not available yet.', {
-      suggestions: ['Use the paste-key stopgap: `tedi auth login --key <api-key>`.'],
-    })
-  }
-
-  async pollDeviceAuth(_deviceCode: string): Promise<DeviceAuthPoll> {
-    throw new TediError('Device-authorization endpoints are not available yet.', {
-      suggestions: ['Use the paste-key stopgap: `tedi auth login --key <api-key>`.'],
-    })
   }
 }
 

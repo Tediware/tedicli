@@ -6,8 +6,12 @@ import {afterEach, beforeEach, describe, it} from 'node:test'
 
 import {runCommand} from '@oclif/test'
 
+import {FileCredentialStore} from '../src/lib/credentials.js'
+
 // Keep the update-check plugin from doing background network work during tests.
 process.env.TEDI_SKIP_NEW_VERSION_CHECK = '1'
+// Ensure an ambient TEDI_API_KEY in the dev's shell can't perturb auth-state tests.
+delete process.env.TEDI_API_KEY
 
 const root = process.cwd()
 const run = (args: string[]) => runCommand(args, {root}, {stripAnsi: true})
@@ -110,10 +114,10 @@ describe('commands against the real client when identity is unavailable', () => 
     await rm(dir, {recursive: true, force: true})
   })
 
-  it('whoami degrades to reporting the locally-stored key', async () => {
+  it('whoami degrades to reporting the locally-known key', async () => {
     const {stdout, error} = await run(['whoami'])
     assert.equal(error, undefined)
-    assert.match(stdout, /key is stored \(\.\.\.1234\)/)
+    assert.match(stdout, /key is present \(\.\.\.1234\)/)
     assert.match(stdout, /not available yet/i)
   })
 
@@ -121,6 +125,48 @@ describe('commands against the real client when identity is unavailable', () => 
     const {stdout, error} = await run(['auth', 'status'])
     assert.equal(error, undefined)
     assert.match(stdout, /Signed in \(key \.\.\.1234\)/)
+  })
+})
+
+describe('TEDI_API_KEY environment credential', () => {
+  // A key in the environment authenticates without `tedi auth login` and without
+  // a stored credential file.
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await makeConfigDir(false) // no stored credential
+    process.env.TEDI_CONFIG_DIR = dir
+    process.env.TEDI_API_KEY = 'sk-env-9999'
+  })
+
+  afterEach(async () => {
+    delete process.env.TEDI_CONFIG_DIR
+    delete process.env.TEDI_API_KEY
+    await rm(dir, {recursive: true, force: true})
+  })
+
+  it('authenticates x12 commands with no stored key', async () => {
+    const {stdout, error} = await run(['x12', 'segment', 'N1'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Segment N1/)
+  })
+
+  it('auth login persists the env key to the credential store', async () => {
+    const {error} = await run(['auth', 'login'])
+    assert.equal(error, undefined)
+    const stored = await new FileCredentialStore(dir).get()
+    assert.equal(stored?.token, 'sk-env-9999')
+  })
+
+  it('auth status notes the env source when identity is unavailable', async () => {
+    process.env.TEDI_API_MOCK = '0'
+    try {
+      const {stdout, error} = await run(['auth', 'status'])
+      assert.equal(error, undefined)
+      assert.match(stdout, /Signed in \(key \.\.\.9999\) \(from TEDI_API_KEY\)/)
+    } finally {
+      delete process.env.TEDI_API_MOCK
+    }
   })
 })
 
