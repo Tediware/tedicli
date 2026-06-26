@@ -11,7 +11,9 @@ import {writeFileAtomic} from './atomic-write.js'
 import {TediError} from './errors.js'
 
 export const DEFAULT_X12_RELEASE = '004010'
-export const DEFAULT_API_BASE_URL = 'https://api.tediware.com'
+// API.md: production host is https://tediware.com; reference endpoints live
+// under <base>/api/x12. Local development uses http://localhost:5004.
+export const DEFAULT_API_BASE_URL = 'https://tediware.com'
 
 /**
  * The known configuration keys. Keeping this explicit (rather than allowing
