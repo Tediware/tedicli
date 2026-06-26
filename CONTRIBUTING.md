@@ -54,9 +54,47 @@ npm run lint           # type-check
 npm test               # run tests
 ```
 
-By default the CLI runs against a synthetic mock backend so it works without a
-live server. Set `TEDI_API_MOCK=0` to target a real API base URL
-(`tedi config set api.baseUrl ...`).
+### Running `tedi` as a command locally
+
+`npm link` symlinks the `tedi` command to this repo so you can invoke it by name:
+
+```bash
+npm link                       # create the global `tedi` symlink
+tedi --help
+npm rm -g @tediware/tedi       # remove the link when done
+```
+
+Two things to know:
+
+- The linked `tedi` runs the built `dist/`, **not** live TypeScript — run
+  `npm run build` after editing, or use `./bin/dev.js <args>` to run from source.
+- `dist/` is gitignored and (re)built by `npm run build`, `pretest`, and `prepack`.
+
+### Trying it out
+
+By default the CLI runs against a synthetic mock backend, so it works with no
+live server (any non-empty key works as a token in mock mode):
+
+```bash
+printf 'sk-dev-test\n' | tedi auth login   # or just `tedi auth login` and paste
+tedi x12 releases
+tedi x12 segment N1
+tedi x12 element 235 --format markdown
+```
+
+To target a real server, set `TEDI_API_MOCK=0` and point at the host (local dev
+runs on `http://localhost:5004`; see [`API.md`](API.md) for the contract):
+
+```bash
+export TEDI_API_MOCK=0
+tedi config set api.baseUrl http://localhost:5004
+export TEDI_API_KEY=<your-key>     # or `tedi auth login`; never pass keys as flags
+tedi x12 releases                  # reachable without a key — good first check
+```
+
+`x12 releases` is the cleanest first call: it works without a key, so it isolates
+"server reachable / base URL right" from "key valid." Use a throwaway config dir
+with `TEDI_CONFIG_DIR=/tmp/tedi-scratch tedi <cmd>` to avoid touching real state.
 
 ## Releasing (maintainers)
 
