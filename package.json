@@ -1,6 +1,6 @@
 {
   "name": "@tediware/tedi",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Official command-line client for the Tediware platform. Thin client over the Tediware API; first capability is X12 reference lookup.",
   "keywords": [
     "tediware",
