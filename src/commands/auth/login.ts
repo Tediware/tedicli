@@ -38,6 +38,9 @@ export default class AuthLogin extends BaseCommand<typeof AuthLogin> {
       return fromEnv
     }
     if (!process.stdin.isTTY) return (await readStdin()).trim()
-    return promptSecret('Tediware API key: ')
+    // The input is hidden (no echo), so say so — otherwise the blank prompt looks
+    // like a hang while the user wonders whether their paste registered.
+    this.log('Paste your Tediware API key, then press Enter. The key stays hidden as you type.')
+    return promptSecret('API key: ')
   }
 }
