@@ -78,8 +78,8 @@ live server (any non-empty key works as a token in mock mode):
 ```bash
 printf 'sk-dev-test\n' | tedi auth login   # or just `tedi auth login` and paste
 tedi x12 releases
-tedi x12 segment N1
-tedi x12 element 235 --format markdown
+tedi x12 seg N1
+tedi x12 ele 235 --format markdown
 ```
 
 To target a real server, set `TEDI_API_MOCK=0` and point at the host (local dev

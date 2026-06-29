@@ -110,7 +110,8 @@ export class MockApiClient implements ApiClient {
 
   async x12Segment(id: string, req: ReferenceRequest): Promise<RenderedReference> {
     this.requireToken()
-    return this.render('Segment', id.toUpperCase(), req, [
+    // Echo the id as received; case normalization is the command's job.
+    return this.render('Segment', id, req, [
       'Purpose: (synthetic) example segment for development.',
       '',
       'Elements:',
