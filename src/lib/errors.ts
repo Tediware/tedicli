@@ -19,7 +19,9 @@ export class TediError extends Error {
 export class NotAuthenticatedError extends TediError {
   constructor() {
     super('You are not signed in.', {
-      suggestions: ['Run `tedi auth login` to authenticate with the Tediware platform.'],
+      suggestions: [
+        'Get a key at https://tediware.com/app/api-keys then run `tedi auth login` to authenticate with Tediware.',
+      ],
       exitCode: 1,
     })
     this.name = 'NotAuthenticatedError'
