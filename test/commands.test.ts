@@ -45,25 +45,43 @@ describe('commands (authenticated)', () => {
     assert.match(stdout, /Acme EDI/)
   })
 
-  it('x12 segment prints a segment and echoes the release', async () => {
-    const {stdout, error} = await run(['x12', 'segment', 'N1'])
+  it('x12 seg prints a segment and echoes the release', async () => {
+    const {stdout, error} = await run(['x12', 'seg', 'N1'])
     assert.equal(error, undefined)
     assert.match(stdout, /Segment N1/)
     assert.match(stdout, /004010/)
   })
 
-  it('x12 segment honors --release', async () => {
-    const {stdout} = await run(['x12', 'segment', 'N1', '-r', '005010'])
+  it('x12 seg honors --release', async () => {
+    const {stdout} = await run(['x12', 'seg', 'N1', '-r', '005010'])
     assert.match(stdout, /005010/)
   })
 
-  it('x12 element --format markdown renders markdown', async () => {
-    const {stdout} = await run(['x12', 'element', '235', '--format', 'markdown'])
+  it('x12 seg uppercases a lowercased id (case-insensitive)', async () => {
+    const {stdout, error} = await run(['x12', 'seg', 'n1'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Segment N1/)
+  })
+
+  it('the legacy "segment" name still works as an alias', async () => {
+    const {stdout, error} = await run(['x12', 'segment', 'N1'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Segment N1/)
+  })
+
+  it('x12 txn uppercases a functional-group form (case-insensitive)', async () => {
+    const {stdout, error} = await run(['x12', 'txn', 'sh856'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Transaction Set SH856/)
+  })
+
+  it('x12 ele --format markdown renders markdown', async () => {
+    const {stdout} = await run(['x12', 'ele', '235', '--format', 'markdown'])
     assert.match(stdout, /^# Element 235/m)
   })
 
   it('x12 --json returns the educational error, not a flat failure', async () => {
-    const {error} = await run(['x12', 'segment', 'N1', '--json'])
+    const {error} = await run(['x12', 'seg', 'N1', '--json'])
     assert.ok(error, 'expected an error')
     assert.match(error!.message, /Structured JSON isn't offered/)
   })
@@ -146,7 +164,7 @@ describe('TEDI_API_KEY environment credential', () => {
   })
 
   it('authenticates x12 commands with no stored key', async () => {
-    const {stdout, error} = await run(['x12', 'segment', 'N1'])
+    const {stdout, error} = await run(['x12', 'seg', 'N1'])
     assert.equal(error, undefined)
     assert.match(stdout, /Segment N1/)
   })
@@ -183,8 +201,8 @@ describe('commands (unauthenticated)', () => {
     await rm(dir, {recursive: true, force: true})
   })
 
-  it('x12 segment requires auth', async () => {
-    const {error} = await run(['x12', 'segment', 'N1'])
+  it('x12 seg requires auth', async () => {
+    const {error} = await run(['x12', 'seg', 'N1'])
     assert.ok(error)
     assert.match(error!.message, /not signed in/i)
   })

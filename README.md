@@ -16,9 +16,9 @@ npm install -g @tediware/tedi
 
 ```bash
 tedi auth login            # paste your API key (entered without echo)
-tedi x12 segment N1        # look up an X12 segment
-tedi x12 transaction 856   # look up a transaction set
-tedi x12 element 235       # look up an element and its code list
+tedi x12 seg N1            # look up an X12 segment
+tedi x12 txn 856           # look up a transaction set
+tedi x12 ele 235           # look up an element and its code list
 ```
 
 ## Authentication
@@ -50,10 +50,10 @@ request.
 ## X12 reference
 
 ```bash
-tedi x12 segment <id>        # e.g. tedi x12 segment N1
-tedi x12 transaction <id>    # e.g. tedi x12 transaction 856  (SH856 also accepted)
-tedi x12 element <id>        # e.g. tedi x12 element 66
-tedi x12 releases            # list supported X12 releases
+tedi x12 seg <id>        # e.g. tedi x12 seg N1   (alias: segment; case-insensitive)
+tedi x12 txn <id>        # e.g. tedi x12 txn 856  (alias: transaction; case-insensitive, SH856 also accepted)
+tedi x12 ele <id>        # e.g. tedi x12 ele 66   (alias: element; case-insensitive)
+tedi x12 releases        # list supported X12 releases
 ```
 
 Every `x12` command accepts:
