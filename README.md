@@ -24,7 +24,7 @@ tedi x12 ele 235           # look up an element and its code list
 ## Authentication
 
 All commands require a Tediware API key. Create one in the Tediware dashboard
-(sign up and accept the service terms there first), then provide it to the CLI.
+(sign up and accept the service terms there first, then head to https://tediware.com/app/api-keys), then provide it to the CLI.
 The key is never passed as a command-line flag, so it can't leak into shell
 history or process listings.
 
@@ -77,10 +77,10 @@ tedi config get x12.release
 tedi config set x12.release 005010
 ```
 
-| Key           | Env override          | Default                     |
-| ------------- | --------------------- | --------------------------- |
-| `x12.release` | `TEDI_X12_RELEASE`    | `004010`                    |
-| `api.baseUrl` | `TEDI_API_BASE_URL`   | `https://tediware.com`      |
+| Key           | Env override        | Default                |
+| ------------- | ------------------- | ---------------------- |
+| `x12.release` | `TEDI_X12_RELEASE`  | `004010`               |
+| `api.baseUrl` | `TEDI_API_BASE_URL` | `https://tediware.com` |
 
 The config directory can be relocated with `TEDI_CONFIG_DIR`.
 
@@ -111,15 +111,20 @@ npm run check:licensed-data   # licensed-data tripwire (also runs in CI)
 ```
 
 By default the CLI runs against a synthetic mock backend, so a fresh checkout is
-fully runnable without a live server. To target a real server (the HTTP contract
-is documented in [`API.md`](API.md)):
+fully runnable without a live server or an API key. To exercise the real API, set
+`TEDI_API_MOCK=0` and provide a key — `api.baseUrl` already defaults to the
+production host (`https://tediware.com`), so there's nothing else to configure
+(the HTTP contract is documented in [`API.md`](API.md)):
 
 ```bash
 export TEDI_API_MOCK=0
-tedi config set api.baseUrl http://localhost:5004   # or your host
-export TEDI_API_KEY=<api-key>                        # or `tedi auth login`
+export TEDI_API_KEY=<api-key>     # or `tedi auth login`
 tedi x12 releases
 ```
+
+> Maintainers running the Tediware server locally (it lives in a separate,
+> private repo) can point at it with
+> `tedi config set api.baseUrl http://localhost:5004`.
 
 > **Note:** the mock backend's reference content is synthetic placeholder data for
 > development only. It is not licensed X12 reference content.

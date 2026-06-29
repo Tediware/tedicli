@@ -11,9 +11,9 @@ See `BRIEF.md` for product intent, command grammar, and the licensing posture.
 ## Base
 
 - All endpoints are under `<base>/api/x12`, where `<base>` is the Tediware host.
-  Production is `https://tediware.com`. Local development runs on
-  `http://localhost:5004`. The host is configurable in the CLI, defaulting to
-  production.
+  The CLI defaults to production, `https://tediware.com`. Maintainers running the
+  (private) Tediware server locally point at `http://localhost:5004`; the host is
+  configurable in the CLI.
 - There is no version prefix in the path.
 - All requests are `GET`.
 
