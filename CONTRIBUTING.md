@@ -72,29 +72,29 @@ Two things to know:
 
 ### Trying it out
 
-By default the CLI runs against a synthetic mock backend, so it works with no
-live server (any non-empty key works as a token in mock mode):
+By default the CLI talks to the real Tediware API (`api.baseUrl` defaults to the
+production host `https://tediware.com`; see [`API.md`](API.md) for the contract).
+Every command needs a key — provide one and try a lookup:
 
 ```bash
-printf 'sk-dev-test\n' | tedi auth login   # or just `tedi auth login` and paste
+export TEDI_API_KEY=<your-key>     # or `tedi auth login`; never pass keys as flags
 tedi x12 releases
 tedi x12 seg N1
 tedi x12 ele 235 --format markdown
 ```
 
-To exercise the real API instead, set `TEDI_API_MOCK=0` and provide a key.
-`api.baseUrl` already defaults to the production host (`https://tediware.com`), so
-you don't need to set it (see [`API.md`](API.md) for the contract):
+For development without a live server or a real key, opt into the synthetic mock
+backend with `TEDI_API_MOCK=1` (any non-empty key works as a token there):
 
 ```bash
-export TEDI_API_MOCK=0
-export TEDI_API_KEY=<your-key>     # or `tedi auth login`; never pass keys as flags
-tedi x12 releases                  # reachable without a key — good first check
+export TEDI_API_MOCK=1
+printf 'sk-dev-test\n' | tedi auth login   # or just `tedi auth login` and paste
+tedi x12 releases
+tedi x12 seg N1
 ```
 
-`x12 releases` is the cleanest first call: it works without a key, so it isolates
-"server reachable / base URL right" from "key valid." Use a throwaway config dir
-with `TEDI_CONFIG_DIR=/tmp/tedi-scratch tedi <cmd>` to avoid touching real state.
+Use a throwaway config dir with `TEDI_CONFIG_DIR=/tmp/tedi-scratch tedi <cmd>` to
+avoid touching real state.
 
 Maintainers running the Tediware server locally (it lives in a separate, private
 repo) can point at it with `tedi config set api.baseUrl http://localhost:5004`.
