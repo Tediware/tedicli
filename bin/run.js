@@ -16,4 +16,12 @@ if (major < 18 || (major === 18 && minor < 19)) {
   process.exit(1)
 }
 
+// The shipped CLI is always compiled JS, so it must never try to auto-transpile
+// from TypeScript source. Without this, a user's `NODE_ENV=development` (or `test`)
+// makes oclif hunt for `typescript` and print a "Could not find typescript" warning
+// before falling back to dist/. Disabling it here (oclif reads `globalThis.oclif`)
+// keeps the production entry quiet. `bin/dev.js` intentionally leaves it on.
+globalThis.oclif = globalThis.oclif || {}
+globalThis.oclif.enableAutoTranspile = false
+
 import('@oclif/core').then((oclif) => oclif.execute({dir: import.meta.url}))
