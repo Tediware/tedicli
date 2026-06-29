@@ -129,21 +129,23 @@ describe('useMock', () => {
     else process.env.TEDI_API_MOCK = original
   })
 
-  it('defaults to mock when unset', () => {
+  it('defaults to the real API when unset', () => {
     delete process.env.TEDI_API_MOCK
-    assert.equal(useMock(), true)
+    assert.equal(useMock(), false)
   })
 
-  it('disables mock for common falsy values', () => {
-    for (const v of ['0', 'false', 'no', 'off', 'FALSE']) {
+  it('enables the mock only for truthy values', () => {
+    for (const v of ['1', 'true', 'yes', 'on', 'TRUE']) {
       process.env.TEDI_API_MOCK = v
-      assert.equal(useMock(), false, `expected ${v} to disable mock`)
+      assert.equal(useMock(), true, `expected ${v} to enable the mock`)
     }
   })
 
-  it('keeps mock on for an empty value', () => {
-    process.env.TEDI_API_MOCK = ''
-    assert.equal(useMock(), true)
+  it('uses the real API for empty or falsy values', () => {
+    for (const v of ['', '0', 'false', 'no', 'off']) {
+      process.env.TEDI_API_MOCK = v
+      assert.equal(useMock(), false, `expected ${v} to use the real API`)
+    }
   })
 })
 

@@ -15,9 +15,9 @@
  *                         identity endpoint doesn't exist server-side yet and
  *                         throws a clear "not available yet" error.
  *
- * `createApiClient` selects between them. The mock is the default so a fresh
- * checkout works out of the box; set `TEDI_API_MOCK=0` to target a real server
- * (e.g. local `http://localhost:5004` via `tedi config set api.baseUrl`).
+ * `createApiClient` selects between them. The real HTTP client is the default so
+ * a published CLI talks to the actual platform; set `TEDI_API_MOCK=1` to opt into
+ * the mock for development or tests (no live server or real key required).
  */
 
 import {OutputFormat} from './output.js'
@@ -306,17 +306,17 @@ export class HttpApiClient implements ApiClient {
 // ---------------------------------------------------------------------------
 
 /**
- * Whether the mock client should be used. Mock is still the default so a fresh
- * checkout (and the test suite) runs without a live server or a real API key.
- * Disable it with any common falsy value — `TEDI_API_MOCK=0`, `false`, `no`,
- * `off` — to hit the real API described in `API.md`. (Flipping this default to
- * HTTP is a release decision: it needs the auth/identity endpoints, which aren't
- * built yet, and a configured key.)
+ * Whether to use the in-memory mock backend instead of the real Tediware API.
+ *
+ * The real HTTP client is the default: a published CLI must talk to the actual
+ * platform, never serve synthetic data to a real user. The mock is opt-in for
+ * local development and the test suite — enable it with a truthy `TEDI_API_MOCK`
+ * (`1`, `true`, `yes`, `on`). Anything else (unset, `0`, `false`, …) hits the
+ * real API described in `API.md`.
  */
 export function useMock(): boolean {
   const value = (process.env.TEDI_API_MOCK ?? '').trim().toLowerCase()
-  if (value === '') return true
-  return !['0', 'false', 'no', 'off'].includes(value)
+  return ['1', 'true', 'yes', 'on'].includes(value)
 }
 
 export function createApiClient(opts: ApiClientOptions): ApiClient {

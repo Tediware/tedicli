@@ -110,15 +110,21 @@ npm test               # run tests
 npm run check:licensed-data   # licensed-data tripwire (also runs in CI)
 ```
 
-By default the CLI runs against a synthetic mock backend, so a fresh checkout is
-fully runnable without a live server or an API key. To exercise the real API, set
-`TEDI_API_MOCK=0` and provide a key — `api.baseUrl` already defaults to the
-production host (`https://tediware.com`), so there's nothing else to configure
-(the HTTP contract is documented in [`API.md`](API.md)):
+By default the CLI talks to the real Tediware API — `api.baseUrl` defaults to the
+production host (`https://tediware.com`), so you just need a key (the HTTP contract
+is documented in [`API.md`](API.md)):
 
 ```bash
-export TEDI_API_MOCK=0
 export TEDI_API_KEY=<api-key>     # or `tedi auth login`
+tedi x12 releases
+```
+
+For local development without a live server or a real key, opt into a synthetic
+mock backend with `TEDI_API_MOCK=1` (any non-empty key works as a token there):
+
+```bash
+export TEDI_API_MOCK=1
+export TEDI_API_KEY=sk-dev-anything
 tedi x12 releases
 ```
 

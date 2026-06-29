@@ -32,10 +32,14 @@ describe('commands (authenticated)', () => {
   beforeEach(async () => {
     dir = await makeConfigDir(true)
     process.env.TEDI_CONFIG_DIR = dir
+    // These tests assert against the mock backend's synthetic data; opt into it
+    // now that the real API is the default.
+    process.env.TEDI_API_MOCK = '1'
   })
 
   afterEach(async () => {
     delete process.env.TEDI_CONFIG_DIR
+    delete process.env.TEDI_API_MOCK
     await rm(dir, {recursive: true, force: true})
   })
 
@@ -155,11 +159,14 @@ describe('TEDI_API_KEY environment credential', () => {
     dir = await makeConfigDir(false) // no stored credential
     process.env.TEDI_CONFIG_DIR = dir
     process.env.TEDI_API_KEY = 'sk-env-9999'
+    // The x12 assertion below checks mock output; opt into the mock backend.
+    process.env.TEDI_API_MOCK = '1'
   })
 
   afterEach(async () => {
     delete process.env.TEDI_CONFIG_DIR
     delete process.env.TEDI_API_KEY
+    delete process.env.TEDI_API_MOCK
     await rm(dir, {recursive: true, force: true})
   })
 
