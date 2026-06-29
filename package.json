@@ -51,7 +51,7 @@
   "oclif": {
     "bin": "tedi",
     "dirname": "tedi",
-    "description": "ʕ·ᴥ·ʔ  Official command-line client for the Tediware platform. Thin client over the Tediware API; first capability is X12 reference lookup.",
+    "description": "ʕ·ᴥ·ʔ  Official command-line client for the Tediware platform https://tediware.com. First capability is X12 reference lookup.",
     "commands": "./dist/commands",
     "topicSeparator": " ",
     "plugins": [
