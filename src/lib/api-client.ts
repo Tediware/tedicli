@@ -24,6 +24,7 @@ import {OutputFormat} from './output.js'
 import {
   AccountUnavailableError,
   IdentityUnavailableError,
+  InvalidApiKeyError,
   NotAuthenticatedError,
   NotFoundError,
   RateLimitedError,
@@ -228,6 +229,11 @@ export class HttpApiClient implements ApiClient {
   private async throwForStatus(res: Response, ctx?: {kind: ReferenceKind; code: string; release: string}): Promise<never> {
     switch (res.status) {
       case 401:
+        // A 401 with a key in hand means the server rejected that key (wrong key,
+        // or a base URL pointed at a server that doesn't recognize it) — which is
+        // a different problem from having no key at all. Branch on whether we
+        // actually sent one rather than on the (server-worded) body.
+        if (this.opts.token) throw new InvalidApiKeyError(this.base)
         throw new NotAuthenticatedError()
       case 403: {
         const msg = await this.readErrorMessage(res)

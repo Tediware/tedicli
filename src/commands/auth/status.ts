@@ -27,7 +27,7 @@ export default class AuthStatus extends BaseCommand<typeof AuthStatus> {
       if (!(err instanceof IdentityUnavailableError)) throw err
       const via = cred.source === 'env' ? ` (from ${API_KEY_ENV})` : ''
       this.log(`Signed in (key ...${cred.token.slice(-4)})${via}.`)
-      this.log('Identity details are not available yet; run `tedi x12 releases` to verify the key works.')
+      this.log('Identity details are not available yet; run `tedi x12 seg ISA` to verify the key works.')
     }
   }
 }

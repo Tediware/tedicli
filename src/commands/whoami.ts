@@ -18,7 +18,7 @@ export default class Whoami extends BaseCommand<typeof Whoami> {
       // No identity endpoint yet: report the locally-known key rather than failing.
       if (!(err instanceof IdentityUnavailableError)) throw err
       this.log(`A key is present (...${cred!.token.slice(-4)}), but identity details are not available yet.`)
-      this.log('Run `tedi x12 releases` to verify the key authenticates.')
+      this.log('Run `tedi x12 seg ISA` to verify the key authenticates.')
     }
   }
 }

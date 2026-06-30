@@ -22,7 +22,10 @@ export default class AuthLogin extends BaseCommand<typeof AuthLogin> {
     }
 
     await this.credentials.set({token: key})
-    this.log('Saved API key. Run `tedi x12 releases` to confirm it works.')
+    // Suggest a command that actually authenticates: the reference reads require a
+    // valid key, whereas `x12 releases` is reachable without one and so can't
+    // confirm the key works.
+    this.log('Saved API key. Run `tedi x12 seg ISA` to confirm it authenticates.')
   }
 
   /**
