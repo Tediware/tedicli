@@ -4,6 +4,7 @@ import {afterEach, describe, it} from 'node:test'
 import {HttpApiClient} from '../src/lib/api-client.js'
 import {
   AccountUnavailableError,
+  InvalidApiKeyError,
   NotAuthenticatedError,
   NotFoundError,
   RateLimitedError,
@@ -119,9 +120,20 @@ describe('HttpApiClient', () => {
   })
 
   describe('error mapping', () => {
-    it('maps 401 to NotAuthenticatedError', async () => {
+    it('maps a 401 with a key to InvalidApiKeyError, echoing the base URL', async () => {
       stubFetch(() => ({status: 401, body: JSON.stringify({error: 'Invalid API key'})}))
-      await assert.rejects(client('sk-test').x12Segment('N1', req()), NotAuthenticatedError)
+      await assert.rejects(client('sk-test').x12Segment('N1', req()), (err: unknown) => {
+        assert.ok(err instanceof InvalidApiKeyError)
+        assert.match(err.message, /rejected by the server at http:\/\/localhost:5004/)
+        return true
+      })
+    })
+
+    it('maps a 401 with no key to NotAuthenticatedError', async () => {
+      // `releases` is the only request the client sends without a key; if that ever
+      // 401s, it's a genuine "not signed in", not a rejected key.
+      stubFetch(() => ({status: 401, body: JSON.stringify({error: 'Not authenticated'})}))
+      await assert.rejects(client(undefined).x12Releases(), NotAuthenticatedError)
     })
 
     it('maps a 403 about terms to TermsNotAcceptedError', async () => {

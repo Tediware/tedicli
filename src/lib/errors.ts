@@ -29,6 +29,30 @@ export class NotAuthenticatedError extends TediError {
 }
 
 /**
+ * Raised on a server 401 when a key WAS sent but the server rejected it. This is
+ * distinct from NotAuthenticatedError (no key stored at all): here a credential is
+ * present, so the problem is the key's validity or the server it was sent to. The
+ * most common cause is an `api.baseUrl` pointed at a server that didn't issue the
+ * key (e.g. a local dev server vs. production), which otherwise masquerades as a
+ * confusing "you are not signed in" despite a stored key.
+ */
+export class InvalidApiKeyError extends TediError {
+  constructor(baseUrl?: string) {
+    const where = baseUrl ? ` by the server at ${baseUrl}` : ''
+    super(`Your API key was rejected${where} (HTTP 401).`, {
+      suggestions: [
+        baseUrl
+          ? `Check that api.baseUrl is the server that issued the key — currently ${baseUrl} (\`tedi config get api.baseUrl\`).`
+          : 'Check that api.baseUrl points at the server that issued the key (`tedi config get api.baseUrl`).',
+        'If the URL is correct, the key may be wrong or revoked — re-run `tedi auth login`, or check TEDI_API_KEY if it is set.',
+      ],
+      exitCode: 1,
+    })
+    this.name = 'InvalidApiKeyError'
+  }
+}
+
+/**
  * Raised when the user requests `--json` for licensed X12 reference data. The
  * message is intentionally educational rather than a flat "unknown flag".
  */
@@ -104,7 +128,7 @@ export class IdentityUnavailableError extends TediError {
     super('The identity endpoint is not available yet.', {
       suggestions: [
         'Identity/whoami is deferred auth work (see API.md).',
-        'To confirm a key actually authenticates, run `tedi x12 releases`.',
+        'To confirm a key actually authenticates, run `tedi x12 seg ISA` (a reference read that requires a valid key; `x12 releases` does not).',
       ],
       exitCode: 1,
     })
