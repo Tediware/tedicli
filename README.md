@@ -19,11 +19,13 @@ tedi auth login            # paste your API key (entered without echo)
 tedi x12 seg N1            # look up an X12 segment
 tedi x12 txn 856           # look up a transaction set
 tedi x12 ele 235           # look up an element and its code list
+tedi edi obfuscate f.edi   # scrub personal data from an EDI file (local, no server)
 ```
 
 ## Authentication
 
-All commands require a Tediware API key. Create one in the Tediware dashboard
+All commands that talk to the Tediware platform require an API key; local `edi`
+file operations run without one. Create a key in the Tediware dashboard
 (sign up and accept the service terms there first, then head to https://tediware.com/app/api-keys), then provide it to the CLI.
 The key is never passed as a command-line flag, so it can't leak into shell
 history or process listings.
@@ -68,6 +70,38 @@ Every `x12` command accepts:
 Colored `console` output is requested only when stdout is an interactive terminal
 and color hasn't been disabled (`--no-color` / `NO_COLOR`). `markdown` is never
 colored, so piped and redirected output stays clean.
+
+## EDI files
+
+Local operations on your own EDI files. `edi obfuscate` runs entirely on your
+machine: your file never leaves it, and no API key is needed. (Future `edi`
+commands may be server-backed; locality is a per-command property, stated in
+each command's help.)
+
+```bash
+tedi edi obfuscate <file>              # obfuscated EDI to stdout ('-' reads stdin)
+tedi edi obfuscate claims.edi -o clean.edi   # write to a file instead
+tedi edi obfuscate claims.edi --seed s       # reproducible replacements
+```
+
+`edi obfuscate` replaces personal data in an X12 interchange with
+format-preserving fakes: person names, street addresses, city/ZIP (first three
+ZIP digits kept), dates of birth (year kept), phone/fax/email, SSNs, member and
+medical-record identifiers, patient account numbers, bank routing/account
+numbers, and free-text notes. The same value always maps to the same replacement
+within a run, so cross-segment references stay intact.
+
+Everything structural survives byte-for-byte: delimiters, qualifiers, code
+values, dates of service, monetary amounts, control numbers, segment counts, and
+element lengths (including the fixed-width ISA header) — an obfuscated file
+parses exactly like the original. Business identifiers (sender/receiver routing
+IDs, organization names, NPIs, tax IDs) are kept so the file stays debuggable.
+
+Replacements are randomized per run and not reversible; `--seed` derives them
+from the given seed instead, for reproducible output. This is a best-effort
+scrub for sharing files in debugging contexts, not a certified HIPAA
+de-identification: review the output before sharing, especially free-text-heavy
+files.
 
 ## Configuration
 
