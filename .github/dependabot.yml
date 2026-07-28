@@ -1,0 +1,39 @@
+version: 2
+
+updates:
+  # Runtime and build dependencies.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # One PR per week for the routine noise; majors still arrive separately
+      # so they get reviewed on their own.
+      npm-minor-and-patch:
+        patterns:
+          - '*'
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # @types/node is deliberately held at the major matching the oldest
+      # supported runtime (engines.node >= 18.19.0). Bumping it would let
+      # code type-check against APIs that do not exist on Node 18.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+
+  # Workflow actions. Worth keeping current: release.yml publishes to npm via
+  # OIDC trusted publishing, so a stale actions/checkout or setup-node is
+  # supply-chain surface on the release path.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - '*'

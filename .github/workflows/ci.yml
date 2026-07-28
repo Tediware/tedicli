@@ -29,7 +29,10 @@ jobs:
 
   dco:
     # Verify every commit in a PR carries a Signed-off-by line (DCO).
-    if: github.event_name == 'pull_request'
+    # Dependabot is exempt: its commits are machine-generated dependency bumps,
+    # not contributions needing a developer certificate of origin, and it has no
+    # way to add the trailer.
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
