@@ -2,7 +2,7 @@ import {Args, Flags} from '@oclif/core'
 
 import {BaseCommand} from '../../base-command.js'
 import {readEdiInput} from '../../lib/edi-input.js'
-import {describeObfuscation, NotAnInterchangeError, obfuscateInterchange} from '../../lib/edi-obfuscate.js'
+import {describeObfuscation, obfuscateInterchange} from '../../lib/edi-obfuscate.js'
 import {TediError} from '../../lib/errors.js'
 import {wantsColor} from '../../lib/output.js'
 
@@ -11,13 +11,15 @@ export default class EdiInspect extends BaseCommand<typeof EdiInspect> {
 
   static description = `Unlike \`edi obfuscate\`, this command SENDS YOUR FILE to the Tediware platform, which is where the parser and the licensed X12 reference data it validates against live. An API key is required.
 
-Pass --obfuscate to scrub personal data locally before the upload, using the same engine as \`tedi edi obfuscate\`. That scrub is format-preserving — delimiters, element lengths, qualifiers, control numbers and segment counts are untouched — so the report describes exactly the structure of your original file while no personal data leaves your machine.
+Personal data is therefore scrubbed locally first, by default, using the same engine as \`tedi edi obfuscate\`. That scrub is format-preserving — delimiters, element lengths, qualifiers, code values, control numbers and segment counts are untouched — so the report describes exactly the structure of your original file while the personal data in it never leaves your machine. Findings that quote a personal value will quote the replacement rather than what is in your file; business identifiers, codes, amounts and control numbers are kept as-is.
+
+Pass --no-obfuscate to upload the file verbatim. That is worth doing when a finding you expect is missing, or when the scrub cannot read the envelope well enough to run.
 
 Findings anchor to the report's line numbers: the report reprints the interchange one segment per line.`
 
   static examples = [
     '<%= config.bin %> edi inspect claims.edi',
-    '<%= config.bin %> edi inspect claims.edi --obfuscate',
+    '<%= config.bin %> edi inspect claims.edi --no-obfuscate',
     '<%= config.bin %> edi inspect claims.edi --format markdown > report.md',
     'cat claims.edi | <%= config.bin %> edi inspect -',
   ]
@@ -33,10 +35,11 @@ Findings anchor to the report's line numbers: the report reprints the interchang
       description: 'Output format for the report.',
     })(),
     obfuscate: Flags.boolean({
-      description: 'Replace personal data with format-preserving fakes locally, before uploading.',
+      default: true,
+      allowNo: true,
+      description: 'Replace personal data with format-preserving fakes locally before uploading. Use --no-obfuscate to send the file verbatim.',
     }),
     seed: Flags.string({
-      dependsOn: ['obfuscate'],
       description: 'Seed the obfuscation so repeated runs upload identical replacements.',
     }),
     // Declared so `--json` gets an explanatory message rather than oclif's
@@ -49,6 +52,9 @@ Findings anchor to the report's line numbers: the report reprints the interchang
       throw new TediError(
         'Inspection reports are rendered server-side as `--format console` or `--format markdown`; JSON is not offered.',
       )
+    }
+    if (this.flags.seed !== undefined && !this.flags.obfuscate) {
+      throw new TediError('--seed sets up the local scrub, which --no-obfuscate turns off. Pass one or the other.')
     }
 
     const {format} = this.flags
@@ -64,18 +70,16 @@ Findings anchor to the report's line numbers: the report reprints the interchang
   }
 
   /**
-   * Obfuscate when asked, and otherwise make the upload visible. This is the one
-   * `edi` command that sends the file off the machine, so an interactive run
-   * says so and names the flag that prevents it. The notice is suppressed when
-   * stderr isn't a terminal, so scripted and piped runs stay quiet.
+   * Scrub the document unless the user opted out. This is the one `edi` command
+   * that sends the file off the machine, so the safe path is the default one:
+   * forgetting a flag must not be what puts personal data on the wire. Both
+   * paths report what happened on stderr — the scrub because the report's quoted
+   * values will be replacements, the opt-out because "this run uploaded the file
+   * unscrubbed" is worth having in a log.
    */
   private prepareUpload(source: string): string {
     if (!this.flags.obfuscate) {
-      if (process.stderr.isTTY) {
-        this.logToStderr(
-          'Uploading this interchange as-is; pass --obfuscate to replace personal data with fakes first.',
-        )
-      }
+      this.logToStderr('Uploading this interchange verbatim (--no-obfuscate).')
       return source
     }
 
@@ -84,14 +88,14 @@ Findings anchor to the report's line numbers: the report reprints the interchang
       this.logToStderr(`${describeObfuscation(result)} before upload.`)
       return result.output
     } catch (err) {
-      // Obfuscation needs a well-formed envelope, but a broken envelope is a
-      // common reason to reach for inspect in the first place. Say what the way
-      // forward is, and be explicit that it means uploading the file unscrubbed.
-      if (err instanceof NotAnInterchangeError) {
+      // The scrub needs a readable envelope, but a broken envelope is a common
+      // reason to reach for inspect in the first place. Say what the way forward
+      // is, and be explicit that it means uploading the file unscrubbed.
+      if (err instanceof TediError) {
         throw new TediError(err.message, {
           suggestions: [
             ...err.suggestions,
-            'Local obfuscation needs a readable ISA envelope. To have the server diagnose the envelope instead, re-run without --obfuscate — that uploads the file as-is.',
+            'The local scrub needs a readable ISA envelope. To have the server diagnose this file instead, re-run with --no-obfuscate — that uploads it verbatim.',
           ],
         })
       }

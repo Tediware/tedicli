@@ -97,6 +97,11 @@ element lengths (including the fixed-width ISA header) — an obfuscated file
 parses exactly like the original. Business identifiers (sender/receiver routing
 IDs, organization names, NPIs, tax IDs) are kept so the file stays debuggable.
 
+Faults survive too: a scrubbed file is invalid in exactly the ways the original
+was. A date of birth that isn't a real date stays impossible rather than being
+quietly replaced with a valid one, so a file you scrub before sending to a
+partner still reproduces the problem you're chasing.
+
 Replacements are randomized per run and not reversible; `--seed` derives them
 from the given seed instead, for reproducible output. This is a best-effort
 scrub for sharing files in debugging contexts, not a certified HIPAA
@@ -106,8 +111,8 @@ files.
 ### Inspecting an interchange
 
 ```bash
-tedi edi inspect claims.edi              # report to stdout ('-' reads stdin)
-tedi edi inspect claims.edi --obfuscate  # scrub personal data before uploading
+tedi edi inspect claims.edi                 # report to stdout ('-' reads stdin)
+tedi edi inspect claims.edi --no-obfuscate  # upload the file verbatim instead
 tedi edi inspect claims.edi --format markdown > report.md
 ```
 
@@ -115,12 +120,21 @@ tedi edi inspect claims.edi --format markdown > report.md
 validates it against the X12 standard; findings anchor to the line numbers of the
 report, which reprints the file one segment per line.
 
-**This command uploads your file.** It requires an API key, because neither the
-parser nor the licensed reference data it validates against ships in the CLI.
-Pass `--obfuscate` to run the local scrub described above before anything leaves
-your machine — it is format-preserving, so the report still describes your
-original file's structure exactly. `--seed` applies to that scrub, and requires
-`--obfuscate`.
+**This command uploads your file**, and requires an API key, because neither the
+parser nor the licensed reference data it validates against ships in the CLI. It
+therefore runs the local scrub described above **by default** — forgetting a flag
+should never be what puts personal data on the wire. The scrub is
+format-preserving, so the report still describes your original file's structure
+exactly; `--seed` applies to it.
+
+What that costs you: findings that quote a personal value quote the replacement
+rather than what's in your file. Business identifiers, code values, amounts, and
+control numbers are kept as-is, so most quoted values still match.
+
+`--no-obfuscate` uploads the file verbatim. Reach for it when a finding you
+expect is missing, or when the scrub can't read the envelope well enough to run
+at all — a mangled ISA fails locally, and the server may still be able to
+diagnose it.
 
 Reports are `--format console` (default) or `--format markdown`; as with X12
 reference, `--json` is not offered.

@@ -80,6 +80,15 @@ const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 const LOWER = 'abcdefghijklmnopqrstuvwxyz'
 const DIGITS = '0123456789'
 
+const MONTH_LENGTHS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+/** Days in a Gregorian month (`month` is 1-12), leap years included. */
+function daysInMonth(year: number, month: number): number {
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0)
+  if (month === 2 && leap) return 29
+  return MONTH_LENGTHS[month - 1] ?? 31
+}
+
 /**
  * Format-preserving value substitutor. Replacements are a pure function of
  * (key, value), which is what makes the mapping consistent across the run —
@@ -143,8 +152,9 @@ class Substitutor {
 
   /**
    * Obfuscate a date element keeping the year (Safe Harbor keeps the year):
-   * CCYYMMDD and CCYYMMDD-CCYYMMDD (RD8 range) forms get a synthetic valid
-   * month/day; anything else falls back to full substitution.
+   * CCYYMMDD and CCYYMMDD-CCYYMMDD (RD8 range) forms get a synthetic month/day
+   * that is valid exactly when the original was; anything else falls back to
+   * full substitution.
    */
   date(value: string): string {
     if (/^\d{8}$/.test(value)) return this.date8(value)
@@ -157,12 +167,38 @@ class Substitutor {
     return this.substitute(value)
   }
 
-  /** CCYYMMDD (pre-validated) → same year, synthetic valid month/day. */
+  /**
+   * CCYYMMDD → same year, synthetic month/day of the same *validity*.
+   *
+   * Every other rule substitutes characters within their class, so a value that
+   * violated the standard still violates it after the scrub. Dates are the
+   * exception: this rule constructs a month and a day rather than substituting
+   * their digits, so it has to choose what to construct. Emitting a real date
+   * for an impossible one would repair the file — the scrubbed copy would pass
+   * a check the original fails, and whoever receives it could not reproduce the
+   * problem. So an out-of-range month or day is replaced by a different
+   * out-of-range one, and `00` stays `00`, which is its own kind of invalid.
+   */
   private date8(value: string): string {
     const digest = this.digestBlock(value, 0)
-    const month = 1 + ((digest[0] ?? 0) % 12)
-    const day = 1 + ((digest[1] ?? 0) % 28)
-    return value.slice(0, 4) + String(month).padStart(2, '0') + String(day).padStart(2, '0')
+    const year = Number(value.slice(0, 4))
+    const month = Number(value.slice(4, 6))
+    const day = Number(value.slice(6, 8))
+    const pick = (index: number, from: number, count: number) =>
+      String(from + ((digest[index] ?? 0) % count)).padStart(2, '0')
+
+    const monthOk = month >= 1 && month <= 12
+    // Judge the day against the original month and year — Feb 29 is invalid in a
+    // non-leap year. When the month itself is out of range there is nothing to
+    // judge against, so accept any day a month could have; marking it invalid
+    // too would add a finding the original file did not have.
+    const dayOk = day >= 1 && day <= (monthOk ? daysInMonth(year, month) : 31)
+
+    // Valid replacements stay inside 1-12 and 1-28, which is safe in every month
+    // of every year; invalid ones land in 13-99 and 32-99, which never are.
+    const newMonth = month === 0 ? '00' : monthOk ? pick(0, 1, 12) : pick(0, 13, 87)
+    const newDay = day === 0 ? '00' : dayOk ? pick(1, 1, 28) : pick(1, 32, 68)
+    return value.slice(0, 4) + newMonth + newDay
   }
 
   /** ZIP: keep the first 3 digits (Safe Harbor geographic granularity), scrub the rest. */

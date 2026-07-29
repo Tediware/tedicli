@@ -161,10 +161,13 @@ between the two.
 Backs: `tedi edi inspect <file>`.
 
 **This is the only endpoint the CLI sends user data to.** `tedi edi inspect`
-therefore offers `--obfuscate`, which runs the local, format-preserving PII scrub
-(the engine behind `tedi edi obfuscate`) before the upload. Because that scrub
-preserves delimiters, element lengths, control numbers, and segment counts, the
-report still describes the original document exactly.
+therefore runs the local, format-preserving PII scrub (the engine behind `tedi
+edi obfuscate`) before the upload **by default**, with `--no-obfuscate` to opt
+out. The default is the safe one deliberately: forgetting a flag must not be what
+puts personal data on the wire, and the scrub costs nothing here because it
+preserves delimiters, element lengths, code values, control numbers, and segment
+counts — and preserves faults, so the server sees the same violations. What
+changes is that findings quoting a personal value quote the replacement.
 
 ## Release scoping
 

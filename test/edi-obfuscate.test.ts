@@ -111,6 +111,51 @@ describe('obfuscateInterchange', () => {
     assert.notEqual(dob, '19801231')
   })
 
+  it('does not repair a date that was already impossible', () => {
+    // A scrub that turned 19801345 into a real date would hand the recipient a
+    // file that passes a check the original fails.
+    const dob = (value: string) =>
+      segment(
+        obfuscateInterchange([SEGMENTS[0], `DMG*D8*${value}*F`, 'IEA*1*000000001'].join('~\n') + '~\n', {
+          seed: 'test-seed',
+        }).output,
+        'DMG',
+      )[2]
+
+    const valid = /^(0[1-9]|1[0-2])(0[1-9]|1\d|2[0-8])$/
+    const badMonth = /^([2-9]\d|1[3-9])/
+    const badDay = /([4-9]\d|3[2-9])$/
+
+    // Month and day both out of range stay out of range.
+    assert.match(dob('19801345').slice(4), new RegExp(badMonth.source + badDay.source))
+    // Feb 29 in a non-leap year is impossible; in a leap year it is not.
+    assert.match(dob('20230229').slice(4), badDay)
+    assert.match(dob('20240229').slice(4), valid)
+    // April has 30 days.
+    assert.match(dob('19800431').slice(4), badDay)
+    // A zero month or day is its own kind of invalid, and is left as one.
+    assert.equal(dob('19800015').slice(4, 6), '00')
+    assert.equal(dob('19801200').slice(6), '00')
+    // ...but a zero month must not make the day look broken too: the original
+    // had one problem, so the scrubbed copy must not have two.
+    assert.match(dob('19800015').slice(6), /^(0[1-9]|1\d|2[0-8])$/)
+    // A valid date still comes back valid.
+    assert.match(dob('19800229').slice(4), valid)
+  })
+
+  it('preserves validity independently for each half of an RD8 range', () => {
+    const range = segment(
+      obfuscateInterchange(
+        [SEGMENTS[0], 'DMG*RD8*19800101-19851345*F', 'IEA*1*000000001'].join('~\n') + '~\n',
+        {seed: 'test-seed'},
+      ).output,
+      'DMG',
+    )[2]
+    const [from, to] = range.split('-')
+    assert.match(from, /^1980(0[1-9]|1[0-2])(0[1-9]|1\d|2[0-8])$/)
+    assert.match(to, /^1985([2-9]\d|1[3-9])([4-9]\d|3[2-9])$/)
+  })
+
   it('keeps both years of an RD8 date range', () => {
     const range = segment(out, 'DMG', 1)[2]
     assert.match(range, /^1980\d{4}-1985\d{4}$/)

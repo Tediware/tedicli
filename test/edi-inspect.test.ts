@@ -78,24 +78,18 @@ describe('edi inspect', () => {
     await rm(dir, {recursive: true, force: true})
   })
 
-  it('uploads the file as-is and prints the rendered report', async () => {
+  it('scrubs the payload by default, and prints the rendered report', async () => {
     const sent = stubFetch()
-    const {stdout, error} = await run(['edi', 'inspect', file])
+    const {stdout, stderr, error} = await run(['edi', 'inspect', file])
 
     assert.equal(error, undefined)
     assert.equal(sent.length, 1)
     assert.equal(sent[0].url, 'http://127.0.0.1:1/api/edi/inspect')
     assert.equal(sent[0].method, 'POST')
-    assert.equal(sent[0].body.edi_content, INTERCHANGE)
     assert.equal(sent[0].body.variant, 'console')
     assert.match(stdout, /INSPECTION REPORT/)
-  })
 
-  it('--obfuscate scrubs the payload before it leaves the machine', async () => {
-    const sent = stubFetch()
-    const {stderr, error} = await run(['edi', 'inspect', file, '--obfuscate', '--seed', 's'])
-
-    assert.equal(error, undefined)
+    // No flag was passed: forgetting one must never be what uploads personal data.
     const uploaded = sent[0].body.edi_content
     assert.ok(!uploaded.includes('MBR123456789'), 'member id must not reach the server')
     assert.ok(!uploaded.includes('JANE'), 'given name must not reach the server')
@@ -103,6 +97,23 @@ describe('edi inspect', () => {
     assert.ok(uploaded.startsWith('ISA*00*'))
     assert.equal(uploaded.length, INTERCHANGE.length)
     assert.match(stderr, /Obfuscated \d+ values across \d+ segments before upload\./)
+  })
+
+  it('--seed makes the uploaded replacements reproducible', async () => {
+    const first = stubFetch()
+    await run(['edi', 'inspect', file, '--seed', 's'])
+    const second = stubFetch()
+    await run(['edi', 'inspect', file, '--seed', 's'])
+    assert.equal(first[0].body.edi_content, second[0].body.edi_content)
+  })
+
+  it('--no-obfuscate uploads the file verbatim, and says so', async () => {
+    const sent = stubFetch()
+    const {stderr, error} = await run(['edi', 'inspect', file, '--no-obfuscate'])
+
+    assert.equal(error, undefined)
+    assert.equal(sent[0].body.edi_content, INTERCHANGE)
+    assert.match(stderr, /verbatim \(--no-obfuscate\)/)
   })
 
   it('sends the requested variant', async () => {
@@ -117,14 +128,24 @@ describe('edi inspect', () => {
     assert.match(error?.message ?? '', /ends without an IEA segment/)
   })
 
-  it('points at the unscrubbed path when local obfuscation cannot parse the file', async () => {
+  it('fails locally, uploading nothing, when the scrub cannot read the file', async () => {
     const sent = stubFetch()
     const notEdi = join(dir, 'notes.txt')
     await writeFile(notEdi, 'just some text', 'utf8')
 
-    const {error} = await run(['edi', 'inspect', notEdi, '--obfuscate'])
+    const {error} = await run(['edi', 'inspect', notEdi])
     assert.match(error?.message ?? '', /doesn't look like an X12 interchange/)
-    assert.equal(sent.length, 0, 'nothing may be uploaded when the scrub fails')
+    assert.equal(sent.length, 0, 'a failed scrub must not fall back to uploading the file')
+  })
+
+  it('lets --no-obfuscate reach the server with a file the scrub cannot read', async () => {
+    const sent = stubFetch({status: 422, body: JSON.stringify({error: 'No ISA segment.'})})
+    const notEdi = join(dir, 'notes.txt')
+    await writeFile(notEdi, 'just some text', 'utf8')
+
+    const {error} = await run(['edi', 'inspect', notEdi, '--no-obfuscate'])
+    assert.equal(sent.length, 1, 'the opt-out is the escape hatch for an unreadable envelope')
+    assert.match(error?.message ?? '', /No ISA segment/)
   })
 
   it('requires auth, without uploading anything', async () => {
@@ -148,9 +169,10 @@ describe('edi inspect', () => {
     assert.match(error?.message ?? '', /JSON is not offered/)
   })
 
-  it('rejects --seed without --obfuscate (it would have no effect)', async () => {
-    stubFetch()
-    const {error} = await run(['edi', 'inspect', file, '--seed', 's'])
-    assert.ok(error, 'expected --seed to require --obfuscate')
+  it('rejects --seed with --no-obfuscate (it would have no effect)', async () => {
+    const sent = stubFetch()
+    const {error} = await run(['edi', 'inspect', file, '--seed', 's', '--no-obfuscate'])
+    assert.match(error?.message ?? '', /Pass one or the other/)
+    assert.equal(sent.length, 0)
   })
 })
