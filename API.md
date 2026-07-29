@@ -166,8 +166,10 @@ edi obfuscate`) before the upload **by default**, with `--no-obfuscate` to opt
 out. The default is the safe one deliberately: forgetting a flag must not be what
 puts personal data on the wire, and the scrub costs nothing here because it
 preserves delimiters, element lengths, code values, control numbers, and segment
-counts — and preserves faults, so the server sees the same violations. What
-changes is that findings quoting a personal value quote the replacement.
+counts — and preserves each value's faults, so the server sees the same
+violations. What changes is that findings quoting a personal value quote the
+replacement, and that a finding about the relationship between two scrubbed
+values (a birth date falling after a service date, say) may not survive.
 
 ## Release scoping
 

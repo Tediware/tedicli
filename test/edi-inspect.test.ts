@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {mkdtemp, rm, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
+import {Readable} from 'node:stream'
 import {afterEach, beforeEach, describe, it} from 'node:test'
 
 import {runCommand} from '@oclif/test'
@@ -114,6 +115,36 @@ describe('edi inspect', () => {
     assert.equal(error, undefined)
     assert.equal(sent[0].body.edi_content, INTERCHANGE)
     assert.match(stderr, /verbatim \(--no-obfuscate\)/)
+  })
+
+  it('scrubs input piped in on stdin, same as a file', async () => {
+    // The advertised `cat claims.edi | tedi edi inspect -` path goes through a
+    // different reader; the default must protect it just the same.
+    const sent = stubFetch()
+    const realStdin = process.stdin
+    Object.defineProperty(process, 'stdin', {value: Readable.from([INTERCHANGE]), configurable: true})
+    try {
+      await run(['edi', 'inspect', '-'])
+    } finally {
+      Object.defineProperty(process, 'stdin', {value: realStdin, configurable: true})
+    }
+
+    assert.equal(sent.length, 1)
+    assert.ok(!sent[0].body.edi_content.includes('MBR123456789'))
+    assert.equal(sent[0].body.edi_content.length, INTERCHANGE.length)
+  })
+
+  it('refuses an oversized document before scrubbing or uploading it', async () => {
+    const sent = stubFetch()
+    const huge = join(dir, 'huge.edi')
+    await writeFile(huge, INTERCHANGE + 'X'.repeat(256 * 1024), 'utf8')
+
+    const {stderr, error} = await run(['edi', 'inspect', huge])
+    assert.match(error?.message ?? '', /accepts up to 256 KB/)
+    assert.equal(sent.length, 0)
+    // The scrub is length-preserving, so it was never going to help: the run
+    // must not report a scrub it then throws away.
+    assert.doesNotMatch(stderr, /Obfuscated/)
   })
 
   it('sends the requested variant', async () => {

@@ -1,5 +1,6 @@
 import {Args, Flags} from '@oclif/core'
 
+import {assertInspectableSize} from '../../lib/api-client.js'
 import {BaseCommand} from '../../base-command.js'
 import {readEdiInput} from '../../lib/edi-input.js'
 import {describeObfuscation, obfuscateInterchange} from '../../lib/edi-obfuscate.js'
@@ -59,6 +60,11 @@ Findings anchor to the report's line numbers: the report reprints the interchang
 
     const {format} = this.flags
     const source = await readEdiInput(this.args.file, (message) => this.logToStderr(message))
+    // Check the size before scrubbing, not just before sending: the scrub is
+    // length-preserving, so a document that is too large was always going to be,
+    // and reporting "obfuscated 400000 values" right before refusing to send
+    // them reads like the scrub was the problem.
+    assertInspectableSize(source)
     const payload = this.prepareUpload(source)
 
     const client = await this.getAuthedClient()

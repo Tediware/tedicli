@@ -97,10 +97,13 @@ element lengths (including the fixed-width ISA header) — an obfuscated file
 parses exactly like the original. Business identifiers (sender/receiver routing
 IDs, organization names, NPIs, tax IDs) are kept so the file stays debuggable.
 
-Faults survive too: a scrubbed file is invalid in exactly the ways the original
-was. A date of birth that isn't a real date stays impossible rather than being
-quietly replaced with a valid one, so a file you scrub before sending to a
-partner still reproduces the problem you're chasing.
+Faults in a value survive too: each replacement is invalid in the same way the
+value it replaces was. A date of birth that isn't a real date stays impossible
+rather than being quietly replaced with a valid one, and a date range that ran
+backwards still does — so a file you scrub before sending to a partner still
+reproduces the problem you're chasing. Relationships *between* values are not
+preserved, since the values are scrubbed independently: a date of birth that
+fell after the date of service may no longer.
 
 Replacements are randomized per run and not reversible; `--seed` derives them
 from the given seed instead, for reproducible output. This is a best-effort

@@ -89,6 +89,14 @@ function daysInMonth(year: number, month: number): number {
   return MONTH_LENGTHS[month - 1] ?? 31
 }
 
+/** Whether a CCYYMMDD string names a real calendar date. */
+function isValidDate8(value: string): boolean {
+  const month = Number(value.slice(4, 6))
+  if (month < 1 || month > 12) return false
+  const day = Number(value.slice(6, 8))
+  return day >= 1 && day <= daysInMonth(Number(value.slice(0, 4)), month)
+}
+
 /**
  * Format-preserving value substitutor. Replacements are a pure function of
  * (key, value), which is what makes the mapping consistent across the run —
@@ -159,10 +167,21 @@ class Substitutor {
   date(value: string): string {
     if (/^\d{8}$/.test(value)) return this.date8(value)
     if (/^\d{8}-\d{8}$/.test(value)) {
-      return value
-        .split('-')
-        .map((part) => this.date8(part))
-        .join('-')
+      // Defaults only satisfy the type checker; the regex above guarantees two halves.
+      const [from = '', to = ''] = value.split('-')
+      let [newFrom, newTo] = [this.date8(from), this.date8(to)]
+      // A range is one value, so its validity includes the two endpoints being
+      // in order — and scrubbing each half independently reorders roughly half
+      // of all same-year ranges. (Different years cannot reorder: years are
+      // kept.) Restore the original ordering by swapping, but only when both
+      // halves are equally valid, so a swap can never move a fault from one
+      // endpoint to the other. A range that already had a broken endpoint is
+      // broken either way, and its ordering is the lesser finding.
+      if (isValidDate8(from) === isValidDate8(to) && from < to !== newFrom < newTo) {
+        // (CCYYMMDD is fixed-width and zero-padded, so string order is date order.)
+        ;[newFrom, newTo] = [newTo, newFrom]
+      }
+      return `${newFrom}-${newTo}`
     }
     return this.substitute(value)
   }
@@ -328,7 +347,11 @@ export function describeObfuscation({segmentCount, valuesObfuscated}: ObfuscateR
 
 /** Obfuscate personal PII in a full X12 interchange, preserving structure exactly. */
 export function obfuscateInterchange(input: string, opts: ObfuscateOptions = {}): ObfuscateResult {
-  const body = input.replace(/^\uFEFF/, '')
+  // A byte-order mark is tolerated when reading, but it is also bytes ahead of
+  // the ISA \u2014 a framing fault a partner (or `edi inspect`) may well report. It
+  // is put back on the way out so the scrub does not quietly fix the file.
+  const bom = input.startsWith('\uFEFF') ? '\uFEFF' : ''
+  const body = input.slice(bom.length)
   const isaStart = leadingWhitespace(body).length
   if (!body.startsWith('ISA', isaStart)) {
     throw new NotAnInterchangeError('it does not start with an ISA segment.')
@@ -403,5 +426,5 @@ export function obfuscateInterchange(input: string, opts: ObfuscateOptions = {})
     return leading + transformSegment(content)
   })
 
-  return {output: out.join(delims.segment), valuesObfuscated, segmentCount}
+  return {output: bom + out.join(delims.segment), valuesObfuscated, segmentCount}
 }

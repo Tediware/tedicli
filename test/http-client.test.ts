@@ -10,6 +10,7 @@ import {
   NotAuthenticatedError,
   NotFoundError,
   RateLimitedError,
+  TediError,
   TermsNotAcceptedError,
 } from '../src/lib/errors.js'
 import {OutputFormat} from '../src/lib/output.js'
@@ -280,6 +281,20 @@ describe('HttpApiClient', () => {
       await assert.rejects(client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}), (err: unknown) => {
         assert.ok(err instanceof InspectionFailedError)
         assert.match(err.message, /could not inspect this interchange/)
+        return true
+      })
+    })
+
+    it('reads a 404 as a missing endpoint, not a missing record', async () => {
+      // Nothing was looked up by id here, so a 404 means api.baseUrl points at a
+      // server without the route — "Record not found" would answer a question
+      // nobody asked, and would hide the real problem.
+      stubFetch(() => ({status: 404, body: ''}))
+      await assert.rejects(client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /no EDI inspection endpoint \(HTTP 404\)/)
+        assert.match(err.message, /http:\/\/localhost:5004/)
+        assert.ok(err.suggestions.some((s) => s.includes('api.baseUrl')))
         return true
       })
     })

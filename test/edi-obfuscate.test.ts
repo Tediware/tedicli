@@ -111,6 +111,18 @@ describe('obfuscateInterchange', () => {
     assert.notEqual(dob, '19801231')
   })
 
+  it('keeps a byte-order mark, which is a framing fault of its own', () => {
+    // A BOM is bytes ahead of the ISA. The scrub tolerates it when reading, but
+    // dropping it from the output would hand back a file that frames correctly
+    // when the original did not.
+    const withBom = '﻿' + INTERCHANGE
+    const scrubbed = obfuscateInterchange(withBom, {seed: 'test-seed'}).output
+    assert.ok(scrubbed.startsWith('﻿'))
+    assert.equal(scrubbed.length, withBom.length)
+    // The interchange itself is scrubbed exactly as it would be without the BOM.
+    assert.equal(scrubbed.slice(1), obfuscateInterchange(INTERCHANGE, {seed: 'test-seed'}).output)
+  })
+
   it('does not repair a date that was already impossible', () => {
     // A scrub that turned 19801345 into a real date would hand the recipient a
     // file that passes a check the original fails.
@@ -141,6 +153,30 @@ describe('obfuscateInterchange', () => {
     assert.match(dob('19800015').slice(6), /^(0[1-9]|1\d|2[0-8])$/)
     // A valid date still comes back valid.
     assert.match(dob('19800229').slice(4), valid)
+  })
+
+  it('keeps an RD8 range in the order it was given', () => {
+    // Each half is scrubbed on its own, which reorders about half of all
+    // same-year ranges unless the ordering is put back deliberately.
+    const range = (value: string, seed: string) =>
+      segment(
+        obfuscateInterchange([SEGMENTS[0], `DMG*RD8*${value}*F`, 'IEA*1*000000001'].join('~\n') + '~\n', {
+          seed,
+        }).output,
+        'DMG',
+      )[2].split('-')
+
+    for (let i = 0; i < 50; i++) {
+      const [from, to] = range('19800101-19800601', `seed-${i}`)
+      assert.ok(from < to, `same-year range reversed with seed-${i}: ${from}-${to}`)
+      // A range that ran backwards must still run backwards.
+      const [revFrom, revTo] = range('19800601-19800101', `seed-${i}`)
+      assert.ok(revFrom > revTo, `backwards range was repaired with seed-${i}: ${revFrom}-${revTo}`)
+    }
+
+    // Equal endpoints stay equal (same value, same replacement).
+    const [same, alsoSame] = range('19800101-19800101', 'x')
+    assert.equal(same, alsoSame)
   })
 
   it('preserves validity independently for each half of an RD8 range', () => {

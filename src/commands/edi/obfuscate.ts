@@ -14,7 +14,7 @@ Replaces personally identifying values with format-preserving fakes: person name
 
 Everything structural is preserved byte-for-byte: delimiters, qualifiers, code values, dates of service, monetary amounts, control numbers, segment counts, and element lengths (including the fixed-width ISA header). Business identifiers — sender/receiver routing IDs, organization names, NPIs, tax IDs — are kept so the file stays debuggable.
 
-Faults are preserved as well: the output is invalid in exactly the ways the input was. A date of birth that is not a real date stays impossible rather than being replaced by a valid one, so a scrubbed file still reproduces the problem you are chasing.
+Faults in a value are preserved as well: each replacement is invalid in the same way the value it replaces was. A date of birth that is not a real date stays impossible rather than being replaced by a valid one, and a date range that ran backwards still does, so a scrubbed file reproduces the problem you are chasing. Relationships between different values are not preserved — a date of birth after the date of service, say, since the two are scrubbed independently.
 
 Replacements are randomized on every run; pass --seed to make them reproducible.`
 

@@ -101,11 +101,12 @@ export interface ApiClientOptions {
 export const MAX_INSPECT_BYTES = 256 * 1024
 
 /**
- * Reject an oversized document before it goes over the wire. Enforced in the
- * client rather than the command so both backends behave the same and the limit
- * stays next to the contract that sets it.
+ * Reject an oversized document before it goes over the wire. Both backends call
+ * it so they behave the same, and the limit lives next to the contract that sets
+ * it. Exported so a command can also fail fast, before spending work on a
+ * document that was never going to be accepted.
  */
-function assertInspectableSize(content: string): void {
+export function assertInspectableSize(content: string): void {
   const bytes = Buffer.byteLength(content, 'utf8')
   if (bytes > MAX_INSPECT_BYTES) throw new EdiTooLargeError(bytes, MAX_INSPECT_BYTES)
 }
@@ -237,6 +238,8 @@ interface ErrorContext {
   reference?: {kind: ReferenceKind; code: string; release: string}
   /** Builds the error for a rejected request, given the server's message. */
   rejected?: (message: string) => TediError
+  /** Builds the 404 for endpoints where a miss means the route itself is absent. */
+  missing?: () => TediError
 }
 
 /**
@@ -326,8 +329,11 @@ export class HttpApiClient implements ApiClient {
         throw new AccountUnavailableError()
       }
       case 404: {
-        const {reference} = ctx
+        const {missing, reference} = ctx
         if (reference) throw new NotFoundError(reference.kind, reference.code, reference.release)
+        // Nothing was looked up by id, so a 404 means the route is not there —
+        // "Record not found" would be answering a question nobody asked.
+        if (missing) throw missing()
         throw new TediError('Record not found.')
       }
       case 429: {
@@ -408,7 +414,18 @@ export class HttpApiClient implements ApiClient {
       body: JSON.stringify(body),
       timeoutMs: INSPECT_TIMEOUT_MS,
     })
-    if (!res.ok) await this.throwForStatus(res, {rejected: (message) => new InspectionFailedError(message)})
+    if (!res.ok) {
+      await this.throwForStatus(res, {
+        rejected: (message) => new InspectionFailedError(message),
+        missing: () =>
+          new TediError(`The server at ${this.base} has no EDI inspection endpoint (HTTP 404).`, {
+            suggestions: [
+              'Check that api.baseUrl points at a current Tediware server (`tedi config get api.baseUrl`).',
+              'Reference lookups (`tedi x12 seg ISA`) work against older servers that predate inspection.',
+            ],
+          }),
+      })
+    }
 
     return {format: req.format, body: await res.text()}
   }

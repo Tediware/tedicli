@@ -110,6 +110,17 @@ describe('commands (authenticated)', () => {
     assert.match(stdout, /005010/)
   })
 
+  it('edi inspect runs against the mock backend', async () => {
+    // The mock is what developers run against with no server and no real key;
+    // it must satisfy the same interface, including the auth requirement.
+    const file = join(dir, 'mock.edi')
+    await writeFile(file, 'ISA*00*          *00*          *ZZ*S              *ZZ*R              *240101*1200*U*00401*000000001*0*T*:~\nIEA*1*000000001~\n', 'utf8')
+    const {stdout, error} = await run(['edi', 'inspect', file])
+    assert.equal(error, undefined)
+    assert.match(stdout, /EDI inspection/)
+    assert.match(stdout, /synthetic/)
+  })
+
   it('update command is registered with a --version flag (npm-native)', async () => {
     // --help loads the command without actually shelling out to npm.
     const {stdout, error} = await run(['update', '--help'])
