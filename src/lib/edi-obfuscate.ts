@@ -281,6 +281,15 @@ function leadingWhitespace(s: string): string {
   return /^\s*/.exec(s)?.[0] ?? ''
 }
 
+/**
+ * One-line human summary of a run, without trailing punctuation so callers can
+ * finish the sentence (`edi inspect` adds "before upload"). Shared so both
+ * commands report a scrub identically.
+ */
+export function describeObfuscation({segmentCount, valuesObfuscated}: ObfuscateResult): string {
+  return `Obfuscated ${valuesObfuscated} value${valuesObfuscated === 1 ? '' : 's'} across ${segmentCount} segments`
+}
+
 /** Obfuscate personal PII in a full X12 interchange, preserving structure exactly. */
 export function obfuscateInterchange(input: string, opts: ObfuscateOptions = {}): ObfuscateResult {
   const body = input.replace(/^\uFEFF/, '')

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import {afterEach, describe, it} from 'node:test'
 
-import {HttpApiClient} from '../src/lib/api-client.js'
+import {HttpApiClient, MAX_INSPECT_BYTES} from '../src/lib/api-client.js'
 import {
   AccountUnavailableError,
+  EdiTooLargeError,
+  InspectionFailedError,
   InvalidApiKeyError,
   NotAuthenticatedError,
   NotFoundError,
@@ -17,6 +19,9 @@ const realFetch = globalThis.fetch
 interface Captured {
   url: string
   headers: Record<string, string>
+  method: string
+  /** Request body, for the endpoints that send one. */
+  body?: string
 }
 
 /** Stub global fetch, recording each request and returning a scripted response. */
@@ -27,7 +32,12 @@ function stubFetch(handler: (req: Captured) => {status?: number; body?: string; 
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
     const headers = (init?.headers ?? {}) as Record<string, string>
-    const captured = {url, headers}
+    const captured = {
+      url,
+      headers,
+      method: init?.method ?? 'GET',
+      body: typeof init?.body === 'string' ? init.body : undefined,
+    }
     calls.push(captured)
     const {status = 200, body = '', headers: resHeaders} = handler(captured)
     return new Response(body, {status, headers: resHeaders})
@@ -190,6 +200,115 @@ describe('HttpApiClient', () => {
         assert.ok(err instanceof Error)
         assert.match(err.message, /failed \(502/)
         assert.doesNotMatch(err.message, /html/)
+        return true
+      })
+    })
+  })
+
+  describe('ediInspect', () => {
+    const INTERCHANGE = 'ISA*00*...~GS*HC*...~'
+
+    it('posts the document as JSON with an explicit variant', async () => {
+      const {calls} = stubFetch(() => ({body: 'INSPECTION REPORT'}))
+      const report = await client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false})
+
+      assert.equal(calls[0].url, 'http://localhost:5004/api/edi/inspect')
+      assert.equal(calls[0].method, 'POST')
+      assert.equal(calls[0].headers.authorization, 'Key sk-test')
+      assert.equal(calls[0].headers['content-type'], 'application/json')
+      assert.deepEqual(JSON.parse(calls[0].body!), {edi_content: INTERCHANGE, variant: 'console'})
+      assert.deepEqual(report, {format: 'console', body: 'INSPECTION REPORT'})
+    })
+
+    it('adds color only when requested, and honors the markdown variant', async () => {
+      const {calls} = stubFetch(() => ({body: '# Inspection'}))
+      const c = client('sk-test')
+      await c.ediInspect(INTERCHANGE, {format: 'console', color: true})
+      await c.ediInspect(INTERCHANGE, {format: 'markdown', color: false})
+
+      assert.equal(JSON.parse(calls[0].body!).color, true)
+      assert.equal(JSON.parse(calls[1].body!).color, undefined)
+      assert.equal(JSON.parse(calls[1].body!).variant, 'markdown')
+    })
+
+    it('fails fast without contacting the server when no token is stored', async () => {
+      const {calls} = stubFetch(() => ({body: 'x'}))
+      await assert.rejects(
+        client(undefined).ediInspect(INTERCHANGE, {format: 'console', color: false}),
+        NotAuthenticatedError,
+      )
+      assert.equal(calls.length, 0)
+    })
+
+    it('rejects an oversized interchange before uploading it', async () => {
+      const {calls} = stubFetch(() => ({body: 'x'}))
+      const huge = 'A'.repeat(MAX_INSPECT_BYTES + 1)
+      await assert.rejects(client('sk-test').ediInspect(huge, {format: 'console', color: false}), (err: unknown) => {
+        assert.ok(err instanceof EdiTooLargeError)
+        assert.match(err.message, /accepts up to 256 KB/)
+        return true
+      })
+      assert.equal(calls.length, 0)
+    })
+
+    it('measures the size in bytes, not characters', async () => {
+      const {calls} = stubFetch(() => ({body: 'x'}))
+      // Just inside the cap by character count, over it once encoded as UTF-8.
+      const multibyte = 'é'.repeat(MAX_INSPECT_BYTES / 2 + 1)
+      await assert.rejects(client('sk-test').ediInspect(multibyte, {format: 'console', color: false}), EdiTooLargeError)
+      assert.equal(calls.length, 0)
+    })
+
+    // The server answers 422 today; 400 and 413 must land identically so a
+    // reclassified rejection still reads as a document problem.
+    for (const status of [400, 413, 422]) {
+      it(`surfaces the server's diagnosis on a ${status}`, async () => {
+        stubFetch(() => ({status, body: JSON.stringify({error: 'Interchange ends without an IEA segment.'})}))
+        await assert.rejects(
+          client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
+          (err: unknown) => {
+            assert.ok(err instanceof InspectionFailedError)
+            assert.equal(err.message, 'Interchange ends without an IEA segment.')
+            return true
+          },
+        )
+      })
+    }
+
+    it('falls back to a generic message when the rejection carries none', async () => {
+      stubFetch(() => ({status: 422, body: ''}))
+      await assert.rejects(client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}), (err: unknown) => {
+        assert.ok(err instanceof InspectionFailedError)
+        assert.match(err.message, /could not inspect this interchange/)
+        return true
+      })
+    })
+
+    it('still maps the shared credential and throttle statuses', async () => {
+      stubFetch(() => ({status: 401, body: JSON.stringify({error: 'Invalid API key'})}))
+      await assert.rejects(
+        client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
+        InvalidApiKeyError,
+      )
+
+      stubFetch(() => ({status: 429, headers: {'retry-after': '7'}, body: '{}'}))
+      await assert.rejects(client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}), (err: unknown) => {
+        assert.ok(err instanceof RateLimitedError)
+        assert.equal(err.retryAfterSeconds, 7)
+        return true
+      })
+    })
+  })
+
+  describe('reference lookups do not borrow the inspect error mapping', () => {
+    it('treats a 400 as an unexpected failure, keeping the status visible', async () => {
+      // The CLI controls every reference parameter, so a 400 there is a bug, not
+      // something the user can fix — it must not render as an inspection failure.
+      stubFetch(() => ({status: 400, body: JSON.stringify({error: "Unknown variant 'xml'."})}))
+      await assert.rejects(client('sk-test').x12Segment('N1', req()), (err: unknown) => {
+        assert.ok(err instanceof Error)
+        assert.match(err.message, /failed \(400/)
+        assert.match(err.message, /Unknown variant/)
         return true
       })
     })

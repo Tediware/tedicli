@@ -100,6 +100,42 @@ export class NotFoundError extends TediError {
   }
 }
 
+/**
+ * Raised before an interchange is uploaded, when it exceeds the inspect
+ * endpoint's size cap (see API.md). Checked client-side so an oversized file
+ * fails at once instead of after a slow upload the server would reject anyway.
+ */
+export class EdiTooLargeError extends TediError {
+  constructor(bytes: number, limitBytes: number) {
+    const kb = (n: number) => `${Math.ceil(n / 1024)} KB`
+    super(`This interchange is ${kb(bytes)}; inspection accepts up to ${kb(limitBytes)}.`, {
+      suggestions: ['Split the file so each interchange fits under the limit, or inspect a single transaction set.'],
+      exitCode: 1,
+    })
+    this.name = 'EdiTooLargeError'
+  }
+}
+
+/**
+ * Raised when the server took the request but could not inspect the document:
+ * an unparseable envelope, an unsupported release, or missing content. The
+ * server's message is safe to print — per the inspect contract it is a rendered
+ * envelope diagnosis, never the raw parser error, which could quote data from
+ * the file being inspected.
+ */
+export class InspectionFailedError extends TediError {
+  constructor(serverMessage = '') {
+    const message = serverMessage.trim()
+    super(message || 'The server could not inspect this interchange.', {
+      // The server's diagnosis is already actionable; only add a hint when it
+      // told us nothing.
+      suggestions: message ? [] : ['Check that the file is a complete X12 interchange (ISA … IEA).'],
+      exitCode: 1,
+    })
+    this.name = 'InspectionFailedError'
+  }
+}
+
 /** Raised on a 429. Carries the server's Retry-After hint (whole seconds) when present. */
 export class RateLimitedError extends TediError {
   readonly retryAfterSeconds?: number

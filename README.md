@@ -20,6 +20,7 @@ tedi x12 seg N1            # look up an X12 segment
 tedi x12 txn 856           # look up a transaction set
 tedi x12 ele 235           # look up an element and its code list
 tedi edi obfuscate f.edi   # scrub personal data from an EDI file (local, no server)
+tedi edi inspect f.edi     # check an interchange against the X12 standard
 ```
 
 ## Authentication
@@ -73,10 +74,9 @@ colored, so piped and redirected output stays clean.
 
 ## EDI files
 
-Local operations on your own EDI files. `edi obfuscate` runs entirely on your
-machine: your file never leaves it, and no API key is needed. (Future `edi`
-commands may be server-backed; locality is a per-command property, stated in
-each command's help.)
+Commands for your own EDI files. Locality is a per-command property, stated in
+each command's help: `edi obfuscate` runs entirely on your machine and needs no
+API key, while `edi inspect` sends the document to the platform.
 
 ```bash
 tedi edi obfuscate <file>              # obfuscated EDI to stdout ('-' reads stdin)
@@ -102,6 +102,28 @@ from the given seed instead, for reproducible output. This is a best-effort
 scrub for sharing files in debugging contexts, not a certified HIPAA
 de-identification: review the output before sharing, especially free-text-heavy
 files.
+
+### Inspecting an interchange
+
+```bash
+tedi edi inspect claims.edi              # report to stdout ('-' reads stdin)
+tedi edi inspect claims.edi --obfuscate  # scrub personal data before uploading
+tedi edi inspect claims.edi --format markdown > report.md
+```
+
+`edi inspect` annotates the interchange, runs framing and envelope checks, and
+validates it against the X12 standard; findings anchor to the line numbers of the
+report, which reprints the file one segment per line.
+
+**This command uploads your file.** It requires an API key, because neither the
+parser nor the licensed reference data it validates against ships in the CLI.
+Pass `--obfuscate` to run the local scrub described above before anything leaves
+your machine — it is format-preserving, so the report still describes your
+original file's structure exactly. `--seed` applies to that scrub, and requires
+`--obfuscate`.
+
+Reports are `--format console` (default) or `--format markdown`; as with X12
+reference, `--json` is not offered.
 
 ## Configuration
 

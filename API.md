@@ -1,21 +1,28 @@
 # tedi CLI — API Surface
 
-The HTTP contract the CLI consumes for the X12 reference feature. This is the
-backing surface for `tedi x12 ...`; it is not a public product API. It is
-reachable and stable enough to build the CLI against, but it is versioned with
-the CLI, not published as a third-party API. Treat the CLI as the supported
-interface and this document as the integration contract behind it.
+The HTTP contract the CLI consumes. Two surfaces are documented here:
+
+- **X12 reference** (`/api/x12`), backing `tedi x12 ...` — licensed reference
+  lookup, read-only.
+- **EDI inspection** (`/api/edi`), backing `tedi edi inspect` — the CLI sends a
+  document up and gets a rendered report back.
+
+This is not a public product API. It is reachable and stable enough to build the
+CLI against, but it is versioned with the CLI, not published as a third-party
+API. Treat the CLI as the supported interface and this document as the
+integration contract behind it.
 
 See `BRIEF.md` for product intent, command grammar, and the licensing posture.
 
 ## Base
 
-- All endpoints are under `<base>/api/x12`, where `<base>` is the Tediware host.
-  The CLI defaults to production, `https://tediware.com`. Maintainers running the
-  (private) Tediware server locally point at `http://localhost:5004`; the host is
-  configurable in the CLI.
+- Endpoints are under `<base>/api/x12` (reference) and `<base>/api/edi`
+  (inspection), where `<base>` is the Tediware host. The CLI defaults to
+  production, `https://tediware.com`. Maintainers running the (private) Tediware
+  server locally point at `http://localhost:5004`; the host is configurable in
+  the CLI.
 - There is no version prefix in the path.
-- All requests are `GET`.
+- Reference requests are all `GET`. Inspection is a `POST` with a JSON body.
 
 ## Authentication
 
@@ -31,6 +38,10 @@ See `BRIEF.md` for product intent, command grammar, and the licensing posture.
   scope-related today. The scope model is server-authoritative and documented in
   the tediware repo at `doc/architecture/api_authentication.md`; treat that as
   canonical rather than re-deriving it here.
+- Inspection sits on that same reference floor: any valid key authenticates it
+  (standard or sandbox — scope is not enforced), provided the organization has
+  accepted the service terms and is not disabled. Unlike the reference
+  endpoints, inspection always requires a key; there is no anonymous path.
 - The three `download` endpoints require the header. `releases` is reachable
   without it, but the CLI should send the header on every request anyway, so
   usage counts against the per-key rate limit rather than only the per-IP one.
@@ -111,6 +122,50 @@ tedi x12 element <code>       -> /elements/:code/download
 tedi x12 transaction <code>   -> /transaction_sets/:id/download
 ```
 
+### Inspect an EDI document
+
+```
+POST /api/edi/inspect
+```
+
+JSON body:
+
+- `edi_content` — the interchange, as a string. Required. Maximum 256 KB
+  (262,144 bytes); the CLI checks the size before uploading so an oversized file
+  fails immediately rather than after the transfer.
+- `variant` — `console` or `markdown`. The CLI always sends an explicit variant;
+  the server defaults to `console` here (note: the opposite of the reference
+  endpoints, which default to `markdown`).
+- `color` — `true` colors the `console` variant only, under the same rule as the
+  reference endpoints. See "Color" below.
+
+Not release-scoped. The release comes from the document's own envelope, so
+`-r/--release` does not apply and an unsupported release is a rejection rather
+than a lookup miss.
+
+Response `200`: the rendered report in the response body, with the same content
+types as the reference endpoints (`text/plain; charset=utf-8` for `console`,
+`text/markdown; charset=utf-8` for `markdown`).
+
+The report annotates the document, runs framing and envelope checks, validates
+against the X12 standard, and reprints the interchange one segment per line —
+findings anchor to those line numbers and close with a `Findings (N errors, M
+notices)` block. Rendering is server-side for the same reason reference rendering
+is: neither the parser nor the licensed reference data it validates against ships
+in the thin CLI.
+
+A document with problems is still a `200`: structural faults are reported as
+findings, not as an error status. See "Inspection errors" below for the line
+between the two.
+
+Backs: `tedi edi inspect <file>`.
+
+**This is the only endpoint the CLI sends user data to.** `tedi edi inspect`
+therefore offers `--obfuscate`, which runs the local, format-preserving PII scrub
+(the engine behind `tedi edi obfuscate`) before the upload. Because that scrub
+preserves delimiters, element lengths, control numbers, and segment counts, the
+report still describes the original document exactly.
+
 ## Release scoping
 
 The three reference endpoints are release-scoped and require `:release` in the
@@ -126,6 +181,11 @@ JSON representation of segment, element, or transaction-set detail, by design
 (licensing posture, see `BRIEF.md`). JSON `index` and `show` actions exist under
 this namespace for the web app, but the CLI must not call them and must not offer
 `--json` for reference data. The only JSON the CLI consumes is `releases`.
+
+Inspection is presentation-only for the same reason: the report quotes the
+standard it validated against, so it is served as `console` or `markdown` text
+and `tedi edi inspect` does not offer `--json` either. (JSON is sent *to* that
+endpoint; nothing structured comes back.)
 
 ## Error contract
 
@@ -163,10 +223,46 @@ Suggested CLI handling:
 429  -> honor the Retry-After header (seconds) and print a friendly wait message
 ```
 
+### Inspection errors
+
+Inspection adds a class the reference endpoints don't have: the payload is the
+user's own file, so a rejection is usually something the user can act on rather
+than a CLI bug.
+
+The dividing line is *readability*, not correctness. A document the parser can
+read comes back `200` however broken it is — an unclosed interchange or an
+`SE`-count mismatch is a **finding in the report**, not an error status. `422` is
+reserved for documents that cannot be read as EDI at all.
+
+```
++---------+--------------------------------------+-------------------------------------------+
+| Status  | Condition                            | Body                                      |
++---------+--------------------------------------+-------------------------------------------+
+| 422     | Missing/empty `edi_content`          | { "error": "EDI content is required." }   |
+| 422     | Not readable as EDI (e.g. no ISA)    | { "error": "<envelope diagnosis>" }       |
+| 422     | Release in the envelope unsupported  | { "error": "Unsupported X12 release. ..." }|
+| 400     | Unrecognized variant                 | { "error": "Unknown variant '...'. ..." } |
+| ?       | `edi_content` over 256 KB            | not observed — the CLI refuses first      |
++---------+--------------------------------------+-------------------------------------------+
+```
+
+The `422`s above were confirmed against a running server. The oversize status was
+not, because the CLI checks the limit client-side and never sends one; it also
+maps `400`, `413`, and `422` on this endpoint to the same user-facing error, so
+it stays correct if the server picks a different code for that case.
+
+The CLI prints the server's message verbatim for those. That is safe: on a parse
+failure the server renders an envelope diagnosis rather than the raw parser
+error, which could otherwise quote data from the file being inspected. Credential
+(`401`/`403`) and throttle (`429`) responses behave exactly as in the table
+above.
+
 ## Rate limits
 
 For client-side backoff. The CLI cannot see these counters; it only sees the
 `429` and the `Retry-After` header.
+
+Reference (`/api/x12`):
 
 ```
 +----------------------+----------------+
@@ -178,6 +274,26 @@ For client-side backoff. The CLI cannot see these counters; it only sees the
 | Per IP               | 10,000 / day   |
 +----------------------+----------------+
 ```
+
+Inspection (`/api/edi/inspect`) is throttled harder, because each request parses
+a whole document:
+
+```
++----------------------+----------------+
+| Scope                | Limit          |
++----------------------+----------------+
+| Per API key          | 30 / minute    |
+| Per API key          | 1,000 / day    |
+| Per IP               | 45 / minute    |
+| Per IP               | 2,000 / day    |
++----------------------+----------------+
+```
+
+The per-IP layers sit deliberately above the per-key ones, so a well-behaved
+caller hits its own credential limit first and a shared NAT does not punish it
+for someone else's traffic. (There is also a per-session limit; it never applies
+to the CLI, which sends no cookies.) The per-key inspection limits are tunable
+server-side, so treat the numbers as indicative and branch on the `429`.
 
 On `429`, respect `Retry-After` (whole seconds). Because there is a daily
 ceiling, a `Retry-After` can occasionally be large; surface the wait rather than
@@ -193,6 +309,8 @@ context, so the CLI does not add ANSI of its own.
 - The CLI sends `color=true` only when all of: variant is `console`, stdout is a
   TTY, `NO_COLOR` is unset, and `--no-color` was not passed. Otherwise it omits
   the parameter and gets plain text, which is safe to pipe or redirect.
+- Inspection follows the identical rule; `color` is a JSON boolean there rather
+  than a query parameter, and is likewise omitted when not wanted.
 
 ## Request examples
 
@@ -212,6 +330,11 @@ curl -H "Authorization: Key $TEDI_API_KEY" \
 # Transaction set by bare code in 004010, console
 curl -H "Authorization: Key $TEDI_API_KEY" \
   "$BASE/api/x12/004010/transaction_sets/856/download?variant=console"
+
+# Inspect a document, colored console
+jq -Rs '{edi_content: ., variant: "console", color: true}' claims.edi | \
+  curl -H "Authorization: Key $TEDI_API_KEY" -H "Content-Type: application/json" \
+    --data-binary @- "$BASE/api/edi/inspect"
 ```
 
 ## Not available yet (do not build against)

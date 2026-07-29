@@ -1,12 +1,9 @@
-import {readFile} from 'node:fs/promises'
-
 import {Args, Flags} from '@oclif/core'
 
 import {BaseCommand} from '../../base-command.js'
 import {writeFileAtomic} from '../../lib/atomic-write.js'
-import {obfuscateInterchange} from '../../lib/edi-obfuscate.js'
-import {TediError} from '../../lib/errors.js'
-import {readStdin} from '../../lib/prompt.js'
+import {readEdiInput} from '../../lib/edi-input.js'
+import {describeObfuscation, obfuscateInterchange} from '../../lib/edi-obfuscate.js'
 
 export default class EdiObfuscate extends BaseCommand<typeof EdiObfuscate> {
   static summary = 'Obfuscate personal data in an X12 EDI file. Runs entirely locally.'
@@ -41,12 +38,10 @@ Replacements are randomized on every run; pass --seed to make them reproducible.
   }
 
   async run(): Promise<void> {
-    if (this.args.file === '-' && process.stdin.isTTY) {
-      this.logToStderr('Reading EDI from the terminal — paste the interchange, then press Ctrl+D.')
-    }
-    const input = await this.readInput(this.args.file)
-    const {output, valuesObfuscated, segmentCount} = obfuscateInterchange(input, {seed: this.flags.seed})
-    const summary = `Obfuscated ${valuesObfuscated} value${valuesObfuscated === 1 ? '' : 's'} across ${segmentCount} segments.`
+    const input = await readEdiInput(this.args.file, (message) => this.logToStderr(message))
+    const result = obfuscateInterchange(input, {seed: this.flags.seed})
+    const {output} = result
+    const summary = `${describeObfuscation(result)}.`
 
     if (this.flags.output) {
       // Atomic so a crash or full disk can't leave a truncated (or worse,
@@ -57,19 +52,6 @@ Replacements are randomized on every run; pass --seed to make them reproducible.
       process.stdout.write(output)
       // The summary goes to stderr so redirected/piped EDI output stays clean.
       this.logToStderr(summary)
-    }
-  }
-
-  private async readInput(file: string): Promise<string> {
-    if (file === '-') return readStdin()
-
-    try {
-      return await readFile(file, 'utf8')
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new TediError(`File not found: ${file}`)
-      }
-      throw err
     }
   }
 }

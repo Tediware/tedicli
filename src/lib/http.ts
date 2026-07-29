@@ -10,15 +10,19 @@ export const DEFAULT_TIMEOUT_MS = 15_000
 /**
  * Like `fetch`, but aborts after `timeoutMs`. On timeout the returned promise
  * rejects with the abort error; callers decide how to surface it.
+ *
+ * `method`/`body` are optional so the same helper covers the reference reads
+ * (GET, no body) and the inspect upload (POST). Callers that send a body are
+ * responsible for its `content-type` header.
  */
 export async function fetchWithTimeout(
   url: string | URL,
-  opts: {timeoutMs?: number; headers?: Record<string, string>} = {},
+  opts: {timeoutMs?: number; headers?: Record<string, string>; method?: string; body?: string} = {},
 ): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS)
   try {
-    return await fetch(url, {headers: opts.headers, signal: controller.signal})
+    return await fetch(url, {body: opts.body, headers: opts.headers, method: opts.method, signal: controller.signal})
   } finally {
     clearTimeout(timer)
   }

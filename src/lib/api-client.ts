@@ -23,7 +23,9 @@
 import {OutputFormat} from './output.js'
 import {
   AccountUnavailableError,
+  EdiTooLargeError,
   IdentityUnavailableError,
+  InspectionFailedError,
   InvalidApiKeyError,
   NotAuthenticatedError,
   NotFoundError,
@@ -43,6 +45,23 @@ export interface ReferenceRequest {
 /** A server-rendered reference document. `body` is ready to print as-is. */
 export interface RenderedReference {
   release: string
+  format: OutputFormat
+  body: string
+}
+
+/**
+ * An inspection request. Unlike a reference lookup this is not release-scoped:
+ * the release comes from the interchange's own envelope, so the server resolves
+ * it (and rejects unsupported ones) from the document itself.
+ */
+export interface InspectionRequest {
+  format: OutputFormat
+  /** Whether to request server-side ANSI color (console format only). */
+  color: boolean
+}
+
+/** A server-rendered inspection report. `body` is ready to print as-is. */
+export interface InspectedEdi {
   format: OutputFormat
   body: string
 }
@@ -69,12 +88,26 @@ export interface ApiClient {
   x12Element(id: string, req: ReferenceRequest): Promise<RenderedReference>
   x12Transaction(id: string, req: ReferenceRequest): Promise<RenderedReference>
   x12Releases(): Promise<ReleaseInfo[]>
+  ediInspect(content: string, req: InspectionRequest): Promise<InspectedEdi>
   whoami(): Promise<Identity>
 }
 
 export interface ApiClientOptions {
   baseUrl: string
   token?: string
+}
+
+/** Largest interchange the inspect endpoint accepts (API.md). */
+export const MAX_INSPECT_BYTES = 256 * 1024
+
+/**
+ * Reject an oversized document before it goes over the wire. Enforced in the
+ * client rather than the command so both backends behave the same and the limit
+ * stays next to the contract that sets it.
+ */
+function assertInspectableSize(content: string): void {
+  const bytes = Buffer.byteLength(content, 'utf8')
+  if (bytes > MAX_INSPECT_BYTES) throw new EdiTooLargeError(bytes, MAX_INSPECT_BYTES)
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +186,32 @@ export class MockApiClient implements ApiClient {
     return MOCK_RELEASES
   }
 
+  async ediInspect(content: string, req: InspectionRequest): Promise<InspectedEdi> {
+    this.requireToken()
+    assertInspectableSize(content)
+    // The mock does not parse EDI — it counts segments crudely so a developer can
+    // still see the command's plumbing (and the effect of --obfuscate) end to end.
+    const segments = content
+      .split(/[~\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const first = /^[A-Za-z0-9]+/.exec(segments[0] ?? '')?.[0]?.toUpperCase() ?? '(none)'
+    const header =
+      req.format === 'markdown'
+        ? ['# EDI inspection', '', '_(synthetic development data — the mock backend does not parse EDI)_', '']
+        : ['EDI inspection    [mock]', '']
+    return {
+      format: req.format,
+      body: [
+        ...header,
+        `Segments: ${segments.length}`,
+        `First segment: ${first}`,
+        '',
+        'Findings: none (synthetic — no parsing or validation happened).',
+      ].join('\n'),
+    }
+  }
+
   async whoami(): Promise<Identity> {
     this.requireToken()
     return {organization: 'Acme EDI (dev)', keyScope: 'reference:read', keyHint: this.opts.token!.slice(-4)}
@@ -171,6 +230,21 @@ const REFERENCE_RESOURCES = {
 } as const
 
 type ReferenceKind = keyof typeof REFERENCE_RESOURCES
+
+/** Per-request hooks that let one status mapper word errors for each endpoint. */
+interface ErrorContext {
+  /** Lookup being performed, used to word a contextual 404. */
+  reference?: {kind: ReferenceKind; code: string; release: string}
+  /** Builds the error for a rejected request, given the server's message. */
+  rejected?: (message: string) => TediError
+}
+
+/**
+ * Inspection parses (and validates) a whole document, so it can legitimately
+ * take longer than a reference read. Give it a longer leash than the shared
+ * default rather than timing out a large but perfectly good file.
+ */
+const INSPECT_TIMEOUT_MS = 60_000
 
 /** Shape of an entry in the `releases` response (`data.releases[]`). */
 interface RawRelease {
@@ -223,11 +297,21 @@ export class HttpApiClient implements ApiClient {
 
   /**
    * Map a non-2xx response to an actionable error, branching on the status code
-   * (per API.md, the 429 body shape differs, so never branch on the body). `ctx`
-   * supplies the resource for a contextual 404 message.
+   * (per API.md, the 429 body shape differs, so never branch on the body).
    */
-  private async throwForStatus(res: Response, ctx?: {kind: ReferenceKind; code: string; release: string}): Promise<never> {
+  private async throwForStatus(res: Response, ctx: ErrorContext = {}): Promise<never> {
     switch (res.status) {
+      case 400:
+      case 413:
+      case 422:
+        // Request-shaped failures. Only `inspect` can legitimately produce one,
+        // since its payload is the user's file. The server uses 422 today; 400
+        // and 413 route here too so an oversized or differently-classified
+        // rejection still reads as a document problem. For reference lookups the
+        // CLI controls every parameter, so these are bugs: fall through to the
+        // generic error, which keeps the status visible.
+        if (ctx.rejected) throw ctx.rejected(await this.readErrorMessage(res))
+        break
       case 401:
         // A 401 with a key in hand means the server rejected that key (wrong key,
         // or a base URL pointed at a server that doesn't recognize it) — which is
@@ -241,20 +325,23 @@ export class HttpApiClient implements ApiClient {
         if (/terms/i.test(msg)) throw new TermsNotAcceptedError()
         throw new AccountUnavailableError()
       }
-      case 404:
-        if (ctx) throw new NotFoundError(ctx.kind, ctx.code, ctx.release)
+      case 404: {
+        const {reference} = ctx
+        if (reference) throw new NotFoundError(reference.kind, reference.code, reference.release)
         throw new TediError('Record not found.')
+      }
       case 429: {
         const header = res.headers.get('retry-after')
         const retry = header === null ? undefined : Number(header)
         throw new RateLimitedError(Number.isFinite(retry) ? retry : undefined)
       }
-      default: {
-        const msg = await this.readErrorMessage(res)
-        const detail = msg ? `: ${msg}` : ''
-        throw new TediError(`Tediware API request failed (${res.status} ${res.statusText})${detail}.`)
-      }
+      default:
+        break
     }
+
+    const msg = await this.readErrorMessage(res)
+    const detail = msg ? `: ${msg}` : ''
+    throw new TediError(`Tediware API request failed (${res.status} ${res.statusText})${detail}.`)
   }
 
   private async reference(kind: ReferenceKind, code: string, req: ReferenceRequest): Promise<RenderedReference> {
@@ -269,7 +356,7 @@ export class HttpApiClient implements ApiClient {
     if (req.color) url.searchParams.set('color', 'true')
 
     const res = await fetchWithTimeout(url, {headers: this.authHeaders()})
-    if (!res.ok) await this.throwForStatus(res, {kind, code, release: req.release})
+    if (!res.ok) await this.throwForStatus(res, {reference: {kind, code, release: req.release}})
 
     const body = await res.text()
     return {release: req.release, format: req.format, body}
@@ -298,6 +385,32 @@ export class HttpApiClient implements ApiClient {
       name: r.name ?? null,
       hipaa: Boolean(r.hipaa),
     }))
+  }
+
+  /**
+   * `POST /api/edi/inspect` — the one call that sends the user's own data to the
+   * platform. The document is uploaded verbatim (the command decides whether to
+   * obfuscate first); the server parses it, validates against the licensed X12
+   * standard, and returns the rendered report as text.
+   */
+  async ediInspect(content: string, req: InspectionRequest): Promise<InspectedEdi> {
+    if (!this.opts.token) throw new NotAuthenticatedError()
+    assertInspectableSize(content)
+
+    const body: Record<string, unknown> = {edi_content: content, variant: req.format}
+    // As with the reference endpoints, `color` is sent only when we actually want
+    // it, and only means anything for the console variant.
+    if (req.color) body.color = true
+
+    const res = await fetchWithTimeout(`${this.base}/api/edi/inspect`, {
+      method: 'POST',
+      headers: {...this.authHeaders(), 'content-type': 'application/json'},
+      body: JSON.stringify(body),
+      timeoutMs: INSPECT_TIMEOUT_MS,
+    })
+    if (!res.ok) await this.throwForStatus(res, {rejected: (message) => new InspectionFailedError(message)})
+
+    return {format: req.format, body: await res.text()}
   }
 
   async whoami(): Promise<Identity> {

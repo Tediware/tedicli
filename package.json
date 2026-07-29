@@ -73,7 +73,7 @@
         "description": "Read and write local tedi configuration."
       },
       "edi": {
-        "description": "Work with your own EDI files (first capability: local PII obfuscation)."
+        "description": "Work with your own EDI files: obfuscate personal data locally, or inspect an interchange."
       },
       "x12": {
         "description": "Look up the X12 reference standard (segments, elements, transaction sets)."
