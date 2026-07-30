@@ -32,9 +32,31 @@ run('npx oclif manifest')
 let files = []
 try {
   const out = run('npm pack --dry-run --json --ignore-scripts')
-  files = (JSON.parse(out)[0]?.files ?? []).map((f) => f.path.replace(/^\.\//, ''))
+  files = packedFiles(out)
+} catch (error) {
+  console.error('Release preflight FAILED: could not read the packed file list.')
+  console.error(`  ✗ ${error.message}`)
+  process.exit(1)
 } finally {
   rmSync('oclif.manifest.json', {force: true})
+}
+
+/**
+ * Extract the packed paths from `npm pack --json`. The output shape is
+ * version-dependent: npm <=11 emits an array of pack results, npm >=12 emits an
+ * object keyed by package name. An unparseable or empty result must fail loudly —
+ * treating it as "no files" would report every required file as missing and send
+ * you hunting a build problem that isn't there.
+ */
+function packedFiles(out) {
+  const parsed = JSON.parse(out)
+  const entries = Array.isArray(parsed) ? parsed : Object.values(parsed ?? {})
+  if (entries.length === 0) throw new Error('npm pack --json returned no package entries')
+  const packed = entries[0]?.files
+  if (!Array.isArray(packed)) {
+    throw new Error(`npm pack --json returned no file list (npm ${run('npm --version').trim()}; output shape may have changed)`)
+  }
+  return packed.map((f) => f.path.replace(/^\.\//, ''))
 }
 
 // 2. Required files must be present.
