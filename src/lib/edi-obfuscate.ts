@@ -36,14 +36,17 @@
 
 import {createHash, createHmac, randomBytes} from 'node:crypto'
 
-import {TediError} from './errors.js'
+import {EXIT_DEFECT, TediError} from './errors.js'
 
 /** Raised when the input does not look like an X12 interchange. */
 export class NotAnInterchangeError extends TediError {
   constructor(reason: string) {
     super(`This doesn't look like an X12 interchange: ${reason}`, {
       suggestions: ['An X12 file starts with a fixed-width ISA segment, e.g. `ISA*00*...`.'],
-      exitCode: 1,
+      // A verdict on the input rather than a tool failure: the scrub read the
+      // file and it is not an interchange. (`edi inspect` re-words this to
+      // "could not run", since there the server may still make sense of it.)
+      exitCode: EXIT_DEFECT,
     })
     this.name = 'NotAnInterchangeError'
   }

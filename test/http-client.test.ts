@@ -5,13 +5,17 @@ import {HttpApiClient, MAX_INSPECT_BYTES} from '../src/lib/api-client.js'
 import {
   AccountUnavailableError,
   EdiTooLargeError,
-  InspectionFailedError,
+  EXIT_DEFECT,
+  EXIT_UNUSABLE,
+  InspectionUnavailableError,
   InvalidApiKeyError,
   NotAuthenticatedError,
   NotFoundError,
   RateLimitedError,
   TediError,
   TermsNotAcceptedError,
+  UnreadableDocumentError,
+  UnsupportedReleaseError,
 } from '../src/lib/errors.js'
 import {OutputFormat} from '../src/lib/output.js'
 
@@ -195,6 +199,39 @@ describe('HttpApiClient', () => {
       })
     })
 
+    it('turns an unreachable server into an actionable error rather than a raw TypeError', async () => {
+      // Unwrapped, this escapes as `TypeError: fetch failed` — not a TediError,
+      // so it reaches the user as a stack trace and exits 1, which is the CLI
+      // telling a build the document is bad when it never reached the server.
+      globalThis.fetch = (async () => {
+        throw Object.assign(new TypeError('fetch failed'), {cause: {code: 'ENOTFOUND'}})
+      }) as typeof fetch
+
+      await assert.rejects(client('sk-test').x12Segment('N1', req()), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /Could not reach the Tediware API at http:\/\/localhost:5004 \(ENOTFOUND\)/)
+        assert.equal(err.exitCode, EXIT_UNUSABLE)
+        assert.ok(err.suggestions.some((s) => s.includes('api.baseUrl')))
+        return true
+      })
+    })
+
+    it('names a timeout as a timeout', async () => {
+      globalThis.fetch = (async () => {
+        throw Object.assign(new Error('The operation was aborted'), {name: 'TimeoutError'})
+      }) as typeof fetch
+
+      await assert.rejects(
+        client('sk-test').ediInspect('ISA*00*...~', {format: 'console', color: false}),
+        (err: unknown) => {
+          assert.ok(err instanceof TediError)
+          assert.match(err.message, /did not respond in time/)
+          assert.equal(err.exitCode, EXIT_UNUSABLE)
+          return true
+        },
+      )
+    })
+
     it('falls back to a generic message when the error body is not JSON', async () => {
       stubFetch(() => ({status: 502, body: '<html>bad gateway</html>'}))
       await assert.rejects(client('sk-test').x12Segment('N1', req()), (err: unknown) => {
@@ -218,7 +255,8 @@ describe('HttpApiClient', () => {
       assert.equal(calls[0].headers.authorization, 'Key sk-test')
       assert.equal(calls[0].headers['content-type'], 'application/json')
       assert.deepEqual(JSON.parse(calls[0].body!), {edi_content: INTERCHANGE, variant: 'console'})
-      assert.deepEqual(report, {format: 'console', body: 'INSPECTION REPORT'})
+      assert.equal(report.format, 'console')
+      assert.equal(report.body, 'INSPECTION REPORT')
     })
 
     it('adds color only when requested, and honors the markdown variant', async () => {
@@ -260,27 +298,179 @@ describe('HttpApiClient', () => {
       assert.equal(calls.length, 0)
     })
 
-    // The server answers 422 today; 400 and 413 must land identically so a
-    // reclassified rejection still reads as a document problem.
-    for (const status of [400, 413, 422]) {
-      it(`surfaces the server's diagnosis on a ${status}`, async () => {
-        stubFetch(() => ({status, body: JSON.stringify({error: 'Interchange ends without an IEA segment.'})}))
-        await assert.rejects(
-          client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
-          (err: unknown) => {
-            assert.ok(err instanceof InspectionFailedError)
-            assert.equal(err.message, 'Interchange ends without an IEA segment.')
-            return true
+    it('reads the findings summary out of the response headers', async () => {
+      stubFetch(() => ({
+        body: 'INSPECTION REPORT',
+        headers: {
+          'x-edi-findings-errors': '3',
+          'x-edi-findings-notices': '1',
+          'x-edi-inspection-complete': 'true',
+        },
+      }))
+      const report = await client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false})
+      assert.deepEqual(report.findings, {errors: 3, notices: 1, complete: true})
+    })
+
+    it('treats a missing summary as unknown rather than as a clean bill of health', async () => {
+      stubFetch(() => ({body: 'INSPECTION REPORT'}))
+      const report = await client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false})
+      assert.equal(report.findings, undefined)
+      assert.equal(report.body, 'INSPECTION REPORT')
+    })
+
+    it('treats a partial or unreadable summary as unknown', async () => {
+      // Half a summary tells us nothing; reading the half that arrived as the
+      // whole truth is how a document nobody checked passes a build.
+      for (const headers of [
+        {'x-edi-findings-errors': '0', 'x-edi-inspection-complete': 'true'},
+        {'x-edi-findings-errors': '0', 'x-edi-findings-notices': '0'},
+        {'x-edi-findings-errors': '', 'x-edi-findings-notices': '0', 'x-edi-inspection-complete': 'true'},
+        {'x-edi-findings-errors': 'lots', 'x-edi-findings-notices': '0', 'x-edi-inspection-complete': 'true'},
+        {'x-edi-findings-errors': '-1', 'x-edi-findings-notices': '0', 'x-edi-inspection-complete': 'true'},
+        // What a repeated header collapses to once `Headers` joins it.
+        {'x-edi-findings-errors': '3, 3', 'x-edi-findings-notices': '0', 'x-edi-inspection-complete': 'true'},
+        // Coercible by `Number()`, but not anything this server sends.
+        {'x-edi-findings-errors': '1e2', 'x-edi-findings-notices': '0', 'x-edi-inspection-complete': 'true'},
+      ]) {
+        stubFetch(() => ({body: 'x', headers}))
+        const report = await client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false})
+        assert.equal(report.findings, undefined, `expected unknown findings for ${JSON.stringify(headers)}`)
+      }
+    })
+
+    it('only believes an inspection is complete when the header says so exactly', async () => {
+      for (const [value, complete] of [
+        ['true', true],
+        ['TRUE', true],
+        ['false', false],
+        ['maybe', false],
+      ] as const) {
+        stubFetch(() => ({
+          body: 'x',
+          headers: {
+            'x-edi-findings-errors': '0',
+            'x-edi-findings-notices': '0',
+            'x-edi-inspection-complete': value,
           },
-        )
-      })
-    }
+        }))
+        const report = await client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false})
+        assert.equal(report.findings?.complete, complete, `for header value ${value}`)
+      }
+    })
+
+    it('reads unparseable_document as a verdict on the document', async () => {
+      stubFetch(() => ({
+        status: 422,
+        body: JSON.stringify({error: 'Interchange ends without an IEA segment.', code: 'unparseable_document'}),
+      }))
+      await assert.rejects(
+        client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
+        (err: unknown) => {
+          assert.ok(err instanceof UnreadableDocumentError)
+          assert.equal(err.message, 'Interchange ends without an IEA segment.')
+          assert.equal(err.exitCode, EXIT_DEFECT)
+          return true
+        },
+      )
+    })
+
+    it('reads unsupported_release as a gap on the server, not a bad document', async () => {
+      stubFetch(() => ({
+        status: 422,
+        body: JSON.stringify({error: 'Unsupported X12 release 007030.', code: 'unsupported_release'}),
+      }))
+      await assert.rejects(
+        client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
+        (err: unknown) => {
+          assert.ok(err instanceof UnsupportedReleaseError)
+          assert.equal(err.message, 'Unsupported X12 release 007030.')
+          // The document was read fine; nothing here should fail a build.
+          assert.equal(err.exitCode, EXIT_UNUSABLE)
+          return true
+        },
+      )
+    })
+
+    it('reads inspection_failed as a fault on the server', async () => {
+      stubFetch(() => ({status: 422, body: JSON.stringify({error: 'Something broke.', code: 'inspection_failed'})}))
+      await assert.rejects(
+        client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
+        (err: unknown) => {
+          assert.ok(err instanceof InspectionUnavailableError)
+          assert.equal(err.exitCode, EXIT_UNUSABLE)
+          return true
+        },
+      )
+    })
+
+    it('keys on the code, not the status it arrived with', async () => {
+      // The statuses have moved once already; the codes are the stable half.
+      stubFetch(() => ({status: 400, body: JSON.stringify({error: 'No ISA.', code: 'unparseable_document'})}))
+      await assert.rejects(
+        client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
+        UnreadableDocumentError,
+      )
+    })
+
+    it('names a rejected request as a fault in the CLI, not in the document', async () => {
+      stubFetch(() => ({status: 400, body: JSON.stringify({error: "Unknown variant 'xml'.", code: 'invalid_variant'})}))
+      await assert.rejects(
+        client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
+        (err: unknown) => {
+          assert.ok(err instanceof TediError)
+          assert.ok(!(err instanceof UnreadableDocumentError))
+          assert.match(err.message, /invalid_variant/)
+          assert.equal(err.exitCode, EXIT_UNUSABLE)
+          assert.ok(err.suggestions.some((s) => s.includes('tedi update')))
+          return true
+        },
+      )
+    })
+
+    it('explains a 413 as the server cap having moved past this build', async () => {
+      stubFetch(() => ({status: 413, body: JSON.stringify({error: 'Too large.', code: 'content_too_large'})}))
+      await assert.rejects(
+        client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
+        (err: unknown) => {
+          assert.ok(err instanceof TediError)
+          assert.equal(err.exitCode, EXIT_UNUSABLE)
+          assert.ok(err.suggestions.some((s) => s.includes('256 KB')))
+          return true
+        },
+      )
+    })
+
+    it('falls back to the status when the rejection carries no code', async () => {
+      // A 422 has always meant "this could not be read as EDI".
+      stubFetch(() => ({status: 422, body: JSON.stringify({error: 'Interchange ends without an IEA segment.'})}))
+      await assert.rejects(
+        client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
+        (err: unknown) => {
+          assert.ok(err instanceof UnreadableDocumentError)
+          assert.equal(err.exitCode, EXIT_DEFECT)
+          return true
+        },
+      )
+
+      // Anything else says nothing about the document, so it must not exit 1.
+      stubFetch(() => ({status: 400, body: JSON.stringify({error: 'Nope.'})}))
+      await assert.rejects(
+        client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}),
+        (err: unknown) => {
+          assert.ok(err instanceof TediError)
+          assert.ok(!(err instanceof UnreadableDocumentError))
+          assert.match(err.message, /HTTP 400.*Nope/)
+          assert.equal(err.exitCode, EXIT_UNUSABLE)
+          return true
+        },
+      )
+    })
 
     it('falls back to a generic message when the rejection carries none', async () => {
       stubFetch(() => ({status: 422, body: ''}))
       await assert.rejects(client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}), (err: unknown) => {
-        assert.ok(err instanceof InspectionFailedError)
-        assert.match(err.message, /could not inspect this interchange/)
+        assert.ok(err instanceof UnreadableDocumentError)
+        assert.match(err.message, /could not read this file as an X12 interchange/)
         return true
       })
     })

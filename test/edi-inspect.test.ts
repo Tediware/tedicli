@@ -12,7 +12,19 @@ process.env.TEDI_SKIP_NEW_VERSION_CHECK = '1'
 delete process.env.TEDI_API_KEY
 
 const root = process.cwd()
-const run = (args: string[]) => runCommand(args, {root}, {stripAnsi: true})
+
+/**
+ * Run the command and report the exit code it would leave behind. A thrown error
+ * carries its own; a report that printed and then failed on findings sets
+ * `process.exitCode` instead, so stdout is flushed rather than cut off by
+ * `process.exit()`.
+ */
+async function run(args: string[]) {
+  process.exitCode = 0
+  const result = await runCommand(args, {root}, {stripAnsi: true})
+  const thrown = (result.error as {oclif?: {exit?: number}} | undefined)?.oclif?.exit
+  return {...result, exit: thrown ?? Number(process.exitCode ?? 0)}
+}
 
 // Synthetic 837 fragment (no real data, tedi:synthetic-data-ok). MBR123456789 is
 // the marker the obfuscation assertions look for.
@@ -34,23 +46,43 @@ interface Sent {
   body: Record<string, string>
 }
 
+/** Findings headers for a healthy run: every check ran, nothing was found. */
+const CLEAN: Record<string, string> = {
+  'x-edi-findings-errors': '0',
+  'x-edi-findings-notices': '0',
+  'x-edi-inspection-complete': 'true',
+}
+
+/** Findings headers for a run that found things (and ran every check). */
+const found = (errors: number, notices = 0): Record<string, string> => ({
+  ...CLEAN,
+  'x-edi-findings-errors': String(errors),
+  'x-edi-findings-notices': String(notices),
+})
+
 /**
  * Stub global fetch so the command exercises the real HTTP client (the mock
  * backend would hide what actually goes over the wire, which is the whole point
  * of the --obfuscate assertions).
+ *
+ * A 200 carries the findings headers unless the test says otherwise; a non-200
+ * carries none, as the server sends none.
  */
-function stubFetch(response: {status?: number; body?: string} = {}): Sent[] {
+function stubFetch(response: {status?: number; body?: string; headers?: Record<string, string>} = {}): Sent[] {
   const sent: Sent[] = []
+  const status = response.status ?? 200
+  const headers = response.headers ?? (status === 200 ? CLEAN : undefined)
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     sent.push({
       url: input.toString(),
       method: init?.method ?? 'GET',
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : {},
     })
-    return new Response(response.body ?? 'INSPECTION REPORT', {status: response.status ?? 200})
+    return new Response(response.body ?? 'INSPECTION REPORT', {status, headers})
   }) as typeof fetch
   return sent
 }
+
 
 describe('edi inspect', () => {
   let dir: string
@@ -154,9 +186,137 @@ describe('edi inspect', () => {
   })
 
   it('surfaces the server diagnosis when the document cannot be inspected', async () => {
-    stubFetch({status: 422, body: JSON.stringify({error: 'Interchange ends without an IEA segment.'})})
-    const {error} = await run(['edi', 'inspect', file])
+    stubFetch({
+      status: 422,
+      body: JSON.stringify({error: 'Interchange ends without an IEA segment.', code: 'unparseable_document'}),
+    })
+    const {error, exit} = await run(['edi', 'inspect', file])
     assert.match(error?.message ?? '', /ends without an IEA segment/)
+    // A verdict on the document, so it exits like a report full of errors.
+    assert.equal(exit, 1)
+  })
+
+  it('refuses an empty file locally, without uploading it', async () => {
+    const sent = stubFetch()
+    const empty = join(dir, 'empty.edi')
+    await writeFile(empty, '   \n', 'utf8')
+
+    const {error} = await run(['edi', 'inspect', empty])
+    assert.match(error?.message ?? '', /nothing to inspect/)
+    assert.equal(sent.length, 0)
+  })
+
+  describe('exit codes', () => {
+    it('exits 0 when every check ran and found nothing', async () => {
+      stubFetch()
+      const {error, stdout, exit} = await run(['edi', 'inspect', file])
+      assert.equal(error, undefined)
+      assert.equal(exit, 0)
+      assert.match(stdout, /INSPECTION REPORT/)
+    })
+
+    it('exits 1 when the inspection found errors, and says how many', async () => {
+      stubFetch({headers: found(3, 1)})
+      const {error, stdout, stderr, exit} = await run(['edi', 'inspect', file])
+      assert.equal(exit, 1)
+      // Nothing is thrown: the exit code rides on process.exitCode so the report
+      // is flushed rather than cut off by an immediate process.exit().
+      assert.equal(error, undefined)
+      // The report is the point of the command: it prints either way.
+      assert.match(stdout, /INSPECTION REPORT/)
+      assert.match(stderr, /3 errors, 1 notice/)
+    })
+
+    it('still exits 1 on findings when a check did not run, noting there may be more', async () => {
+      // A crashed check loses findings; it never invents them. Three errors are
+      // three errors, and calling that "inconclusive" would bury a real verdict.
+      stubFetch({headers: {...found(3), 'x-edi-inspection-complete': 'false'}})
+      const {stderr, exit} = await run(['edi', 'inspect', file])
+      assert.equal(exit, 1)
+      assert.match(stderr, /3 errors, 0 notices\..*there may be more/)
+    })
+
+    it('ignores notices unless --fail-on notice asks for them', async () => {
+      stubFetch({headers: found(0, 2)})
+      const clean = await run(['edi', 'inspect', file])
+      assert.equal(clean.error, undefined)
+
+      stubFetch({headers: found(0, 2)})
+      const strict = await run(['edi', 'inspect', file, '--fail-on', 'notice'])
+      assert.equal(strict.exit, 1)
+      assert.match(strict.stderr, /0 errors, 2 notices.*--fail-on notice/s)
+    })
+
+    it('exits 2 when the server says a check did not run, however clean the report looks', async () => {
+      // The inspection is fail-soft: a check that crashed takes its findings with
+      // it, so zero errors here is not evidence of anything.
+      stubFetch({headers: {...CLEAN, 'x-edi-inspection-complete': 'false'}})
+      const {stdout, stderr, exit} = await run(['edi', 'inspect', file])
+      assert.equal(exit, 2)
+      assert.match(stdout, /INSPECTION REPORT/)
+      assert.match(stderr, /at least one check did not run/)
+    })
+
+    it('exits 2 when the server reports no findings at all', async () => {
+      // An older server. Absence is not zero, so this must not pass a build.
+      stubFetch({headers: {}})
+      const {stdout, stderr, exit} = await run(['edi', 'inspect', file])
+      assert.equal(exit, 2)
+      assert.match(stdout, /INSPECTION REPORT/)
+      assert.match(stderr, /did not report what the inspection found/)
+    })
+
+    it('exits 2 for an unsupported release: a gap on the server, not a bad document', async () => {
+      stubFetch({
+        status: 422,
+        body: JSON.stringify({error: 'Unsupported X12 release 007030.', code: 'unsupported_release'}),
+      })
+      const {error, exit} = await run(['edi', 'inspect', file])
+      assert.equal(exit, 2)
+      assert.match(error?.message ?? '', /Unsupported X12 release/)
+    })
+
+    it('exits 2 for a fault on the server', async () => {
+      stubFetch({status: 422, body: JSON.stringify({error: 'Boom.', code: 'inspection_failed'})})
+      const {error, exit} = await run(['edi', 'inspect', file])
+      assert.equal(exit, 2)
+    })
+
+    it('exits 2 when the command could not run at all', async () => {
+      // No key: nothing was learned about the document, so a build must not read
+      // this as "the file is bad".
+      stubFetch()
+      await rm(join(dir, 'credentials.json'))
+      const {exit} = await run(['edi', 'inspect', file])
+      assert.equal(exit, 2)
+    })
+
+    it('exits 2 with a readable message when the server cannot be reached', async () => {
+      // A refused connection escapes fetch as a bare TypeError, which oclif
+      // renders as a stack trace and exits 1 for — telling CI the document is
+      // bad when the CLI never got as far as asking.
+      globalThis.fetch = (async () => {
+        throw Object.assign(new TypeError('fetch failed'), {cause: {code: 'ECONNREFUSED'}})
+      }) as typeof fetch
+
+      const {error, exit} = await run(['edi', 'inspect', file])
+      assert.equal(exit, 2)
+      assert.match(error?.message ?? '', /Could not reach the Tediware API at http:\/\/127\.0\.0\.1:1 \(ECONNREFUSED\)/)
+    })
+
+    it('exits 2 when the local scrub cannot read the file: inconclusive, not invalid', async () => {
+      // The scrub reads the envelope more strictly than the server's parser, so
+      // its refusal is not a verdict on the document — --no-obfuscate is the way
+      // forward, and `edi obfuscate` (where the scrub *is* the answer) exits 1.
+      const sent = stubFetch()
+      const notEdi = join(dir, 'notes.txt')
+      await writeFile(notEdi, 'just some text', 'utf8')
+
+      const {error, exit} = await run(['edi', 'inspect', notEdi])
+      assert.equal(exit, 2)
+      assert.equal(sent.length, 0)
+      assert.ok(error?.message.includes("doesn't look like an X12 interchange"))
+    })
   })
 
   it('fails locally, uploading nothing, when the scrub cannot read the file', async () => {

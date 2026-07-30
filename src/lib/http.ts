@@ -7,6 +7,14 @@
 /** Default request timeout for platform API calls. */
 export const DEFAULT_TIMEOUT_MS = 15_000
 
+/** Everything a caller may vary per request. */
+export interface FetchOptions {
+  timeoutMs?: number
+  headers?: Record<string, string>
+  method?: string
+  body?: string
+}
+
 /**
  * Like `fetch`, but aborts after `timeoutMs`. On timeout the returned promise
  * rejects with the abort error; callers decide how to surface it.
@@ -22,10 +30,7 @@ export const DEFAULT_TIMEOUT_MS = 15_000
  * (GET, no body) and the inspect upload (POST). Callers that send a body are
  * responsible for its `content-type` header.
  */
-export async function fetchWithTimeout(
-  url: string | URL,
-  opts: {timeoutMs?: number; headers?: Record<string, string>; method?: string; body?: string} = {},
-): Promise<Response> {
+export async function fetchWithTimeout(url: string | URL, opts: FetchOptions = {}): Promise<Response> {
   return fetch(url, {
     body: opts.body,
     headers: opts.headers,

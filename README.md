@@ -117,6 +117,7 @@ files.
 tedi edi inspect claims.edi                 # report to stdout ('-' reads stdin)
 tedi edi inspect claims.edi --no-obfuscate  # upload the file verbatim instead
 tedi edi inspect claims.edi --format markdown > report.md
+tedi edi inspect claims.edi --fail-on notice  # count notices toward exit 1 too
 ```
 
 `edi inspect` annotates the interchange, runs framing and envelope checks, and
@@ -141,6 +142,41 @@ diagnose it.
 
 Reports are `--format console` (default) or `--format markdown`; as with X12
 reference, `--json` is not offered.
+
+#### Exit codes
+
+Built for CI: the exit code distinguishes a bad document from a run that never
+happened, so a gate can tell "this file is broken" from "the key expired".
+
+| Exit | Meaning                                                                     |
+| ---- | --------------------------------------------------------------------------- |
+| `0`  | The inspection ran, every check completed, and it found nothing.             |
+| `1`  | It found errors — or the server could not read the file as EDI at all.       |
+| `2`  | It did not run, or its result cannot be trusted. Nothing was learned.        |
+
+`--fail-on notice` counts notices toward `1` as well; the default, `--fail-on
+error`, exits `1` only for errors. Either way the report prints, and a one-line
+count goes to stderr so a redirected report still tells you why the build failed.
+
+Exit `2` covers the ordinary tool failures — no key, rate limited, network gone,
+a release the platform has no reference data for, a fault on the server — and two
+cases where a clean-looking report is not evidence of anything: when the server
+says a check did not run (the inspection is fail-soft, so a crashed check takes
+its findings with it), and when it reports no finding counts at all. Both warn
+loudly on stderr rather than passing quietly.
+
+Findings still outrank an incomplete run: a crashed check loses findings, it
+never invents them, so anything that did surface exits `1` with the incompleteness
+noted as a caveat.
+
+```bash
+tedi edi inspect claims.edi > report.txt
+case $? in
+  0) echo "clean" ;;
+  1) echo "the interchange has problems"; cat report.txt ;;
+  *) echo "inspection did not run — do not treat this as a pass" ;;
+esac
+```
 
 ## Configuration
 

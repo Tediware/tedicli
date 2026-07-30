@@ -1,10 +1,10 @@
 import {Args, Flags} from '@oclif/core'
 
-import {assertInspectableSize} from '../../lib/api-client.js'
+import {assertInspectableSize, InspectionFindings} from '../../lib/api-client.js'
 import {BaseCommand} from '../../base-command.js'
 import {readEdiInput} from '../../lib/edi-input.js'
 import {describeObfuscation, obfuscateInterchange} from '../../lib/edi-obfuscate.js'
-import {TediError} from '../../lib/errors.js'
+import {EXIT_DEFECT, EXIT_UNUSABLE, TediError} from '../../lib/errors.js'
 import {wantsColor} from '../../lib/output.js'
 
 export default class EdiInspect extends BaseCommand<typeof EdiInspect> {
@@ -16,13 +16,16 @@ Personal data is therefore scrubbed locally first, by default, using the same en
 
 Pass --no-obfuscate to upload the file verbatim. That is worth doing when a finding you expect is missing, or when the scrub cannot read the envelope well enough to run.
 
-Findings anchor to the report's line numbers: the report reprints the interchange one segment per line.`
+Findings anchor to the report's line numbers: the report reprints the interchange one segment per line.
+
+Exit codes are meant for CI: 0 when the inspection ran and found nothing, 1 when it found something (see --fail-on), and 2 when it could not run — no key, rate limited, an unsupported release, a server fault, or an inspection the server reports as incomplete. Only 1 means "your document is bad".`
 
   static examples = [
     '<%= config.bin %> edi inspect claims.edi',
     '<%= config.bin %> edi inspect claims.edi --no-obfuscate',
     '<%= config.bin %> edi inspect claims.edi --format markdown > report.md',
     'cat claims.edi | <%= config.bin %> edi inspect -',
+    '<%= config.bin %> edi inspect claims.edi --fail-on notice',
   ]
 
   static args = {
@@ -43,6 +46,11 @@ Findings anchor to the report's line numbers: the report reprints the interchang
     seed: Flags.string({
       description: 'Seed the obfuscation so repeated runs upload identical replacements.',
     }),
+    'fail-on': Flags.option({
+      options: ['error', 'notice'] as const,
+      default: 'error',
+      description: 'Which findings exit 1. `error` counts only errors; `notice` counts notices too.',
+    })(),
     // Declared so `--json` gets an explanatory message rather than oclif's
     // generic "Nonexistent flag". Hidden from help.
     json: Flags.boolean({hidden: true}),
@@ -60,6 +68,14 @@ Findings anchor to the report's line numbers: the report reprints the interchang
 
     const {format} = this.flags
     const source = await readEdiInput(this.args.file, (message) => this.logToStderr(message))
+    if (source.trim() === '') {
+      // Nothing here could be inspected, and saying so locally costs a round
+      // trip less than the server's refusal (`missing_parameter` for a truly
+      // empty body) and names the file the user actually passed.
+      throw new TediError(
+        `There is nothing to inspect: ${this.args.file === '-' ? 'stdin was empty' : `${this.args.file} is empty`}.`,
+      )
+    }
     // Check the size before scrubbing, not just before sending: the scrub is
     // length-preserving, so a document that is too large was always going to be,
     // and reporting "obfuscated 400000 values" right before refusing to send
@@ -73,6 +89,62 @@ Findings anchor to the report's line numbers: the report reprints the interchang
       color: wantsColor(format, {noColorFlag: this.flags['no-color']}),
     })
     this.log(report.body)
+    this.exitForFindings(report.findings)
+  }
+
+  /**
+   * Turn the server's findings summary into an exit code, so a CI job can gate
+   * on this command without parsing the report.
+   *
+   * The report is already printed by the time this runs; every path here shows
+   * the user what came back, and only the exit code differs. Two of them exit 2
+   * despite a report that looks fine, because a report is only evidence if
+   * something actually examined the document:
+   *
+   *   - `complete=false` means at least one check crashed, and the inspection is
+   *     fail-soft, so its findings vanished rather than surfacing. Zero errors
+   *     there does not mean zero errors.
+   *   - no summary at all means the server predates these headers. Absence is
+   *     not zero either, and silently exiting 0 would be a green build nobody
+   *     earned.
+   *
+   * Findings are weighed first, though: a crashed check loses findings, it never
+   * invents them, so anything that did surface is a real verdict on the document
+   * and incompleteness is a caveat on it rather than grounds to throw it away.
+   *
+   * This sets `process.exitCode` and returns instead of calling `this.exit()`.
+   * `this.exit()` throws, and oclif's handler answers that with `process.exit()`,
+   * which abandons whatever is still buffered in stdout — on macOS that silently
+   * truncates a piped report at 64 KB. Exiting normally lets Node drain it
+   * first. The report is what the user asked for; cutting it off to deliver an
+   * exit code sooner is the wrong trade.
+   */
+  private exitForFindings(findings?: InspectionFindings): void {
+    if (!findings) {
+      this.warn(
+        'This server did not report what the inspection found, so the exit code cannot reflect the report above. Read it yourself, and check that api.baseUrl points at a current Tediware server.',
+      )
+      process.exitCode = EXIT_UNUSABLE
+      return
+    }
+
+    const {complete, errors, notices} = findings
+    const counted = this.flags['fail-on'] === 'notice' ? errors + notices : errors
+
+    if (counted > 0) {
+      const why = errors === 0 ? ' Failing on notices (--fail-on notice).' : ''
+      const caveat = complete ? '' : ' At least one check did not run, so there may be more.'
+      this.logToStderr(`${summarize(errors, notices)}.${why}${caveat}`)
+      process.exitCode = EXIT_DEFECT
+      return
+    }
+
+    if (!complete) {
+      this.warn(
+        'The server reports that at least one check did not run, and nothing that did run failed this document: findings vanish with a crashed check, so the report above is not evidence that the interchange is sound. Re-run it, and report the failure to Tediware if it persists.',
+      )
+      process.exitCode = EXIT_UNUSABLE
+    }
   }
 
   /**
@@ -103,9 +175,20 @@ Findings anchor to the report's line numbers: the report reprints the interchang
             ...err.suggestions,
             'The local scrub needs a readable ISA envelope. To have the server diagnose this file instead, re-run with --no-obfuscate — that uploads it verbatim.',
           ],
+          // Deliberately "could not run", not the scrub's own exit 1. The scrub
+          // reads the envelope more strictly than the server's parser does, so
+          // its refusal is inconclusive about the file: the way forward is
+          // --no-obfuscate, not "this document is invalid".
+          exitCode: EXIT_UNUSABLE,
         })
       }
       throw err
     }
   }
+}
+
+/** "3 errors, 1 notice" — the counts, worded for a one-line summary. */
+function summarize(errors: number, notices: number): string {
+  const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+  return `${count(errors, 'error')}, ${count(notices, 'notice')}`
 }

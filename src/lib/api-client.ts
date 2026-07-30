@@ -25,15 +25,17 @@ import {
   AccountUnavailableError,
   EdiTooLargeError,
   IdentityUnavailableError,
-  InspectionFailedError,
+  InspectionUnavailableError,
   InvalidApiKeyError,
   NotAuthenticatedError,
   NotFoundError,
   RateLimitedError,
   TediError,
   TermsNotAcceptedError,
+  UnreadableDocumentError,
+  UnsupportedReleaseError,
 } from './errors.js'
-import {fetchWithTimeout} from './http.js'
+import {fetchWithTimeout, FetchOptions} from './http.js'
 
 export interface ReferenceRequest {
   release: string
@@ -60,10 +62,33 @@ export interface InspectionRequest {
   color: boolean
 }
 
+/**
+ * What the inspection found, as reported by the response headers rather than by
+ * re-reading the rendered report (which is the server's to format).
+ */
+export interface InspectionFindings {
+  errors: number
+  notices: number
+  /**
+   * Whether every check actually ran. The inspection is deliberately fail-soft:
+   * a check that crashes takes its findings with it, so a document nobody
+   * examined can come back with zero errors. `false` means the report is not
+   * evidence of anything, which is why a gate on the counts alone is wrong.
+   */
+  complete: boolean
+}
+
 /** A server-rendered inspection report. `body` is ready to print as-is. */
 export interface InspectedEdi {
   format: OutputFormat
   body: string
+  /**
+   * The findings summary from the response headers, or `undefined` when the
+   * server did not send it. Undefined is *not* zero: it means this run learned
+   * nothing about how the document fared, and callers must not report a clean
+   * bill of health on the strength of it.
+   */
+  findings?: InspectionFindings
 }
 
 export interface ReleaseInfo {
@@ -210,6 +235,10 @@ export class MockApiClient implements ApiClient {
         '',
         'Findings: none (synthetic — no parsing or validation happened).',
       ].join('\n'),
+      // Reported as a clean, complete run so the command's exit-code path is
+      // exercisable against the mock. The body says plainly that nothing was
+      // actually validated; no real document is being vouched for here.
+      findings: {errors: 0, notices: 0, complete: true},
     }
   }
 
@@ -232,12 +261,23 @@ const REFERENCE_RESOURCES = {
 
 type ReferenceKind = keyof typeof REFERENCE_RESOURCES
 
+/**
+ * A refusal, as the server states it: a human message plus a stable machine
+ * `code` (absent on the auth and throttle responses, and on any server old
+ * enough to predate the codes).
+ */
+export interface ServerFault {
+  message: string
+  code?: string
+  status: number
+}
+
 /** Per-request hooks that let one status mapper word errors for each endpoint. */
 interface ErrorContext {
   /** Lookup being performed, used to word a contextual 404. */
   reference?: {kind: ReferenceKind; code: string; release: string}
-  /** Builds the error for a rejected request, given the server's message. */
-  rejected?: (message: string) => TediError
+  /** Builds the error for a rejected request from the server's own account of it. */
+  rejected?: (fault: ServerFault) => TediError
   /** Builds the 404 for endpoints where a miss means the route itself is absent. */
   missing?: () => TediError
 }
@@ -248,6 +288,88 @@ interface ErrorContext {
  * default rather than timing out a large but perfectly good file.
  */
 const INSPECT_TIMEOUT_MS = 60_000
+
+/** Response headers a 200 from `/api/edi/inspect` carries its findings summary in. */
+const FINDINGS_ERRORS_HEADER = 'x-edi-findings-errors'
+const FINDINGS_NOTICES_HEADER = 'x-edi-findings-notices'
+const INSPECTION_COMPLETE_HEADER = 'x-edi-inspection-complete'
+
+/**
+ * Parse a count header; undefined when it is absent or not a plain count.
+ *
+ * Deliberately stricter than `Number()`, which would take `3.0`, `1e2`, `0x10`
+ * and a repeated header's `"3, 3"` as counts. None of those are things this
+ * server sends, so reading one as a number means guessing at a response we do
+ * not understand — and the whole point here is to say "unknown" instead.
+ */
+function readCount(raw: string | null): number | undefined {
+  if (raw === null || !/^\d+$/.test(raw.trim())) return undefined
+  return Number(raw.trim())
+}
+
+/**
+ * Read the findings summary out of a 200's headers.
+ *
+ * Undefined unless all three headers are present and make sense: a partial or
+ * garbled set means "we don't know how this document fared", never "nothing was
+ * wrong with it". `complete` is true only when the server says exactly that, so
+ * an unrecognized value degrades to the cautious reading rather than the
+ * flattering one.
+ */
+function readFindings(headers: Headers): InspectionFindings | undefined {
+  const errors = readCount(headers.get(FINDINGS_ERRORS_HEADER))
+  const notices = readCount(headers.get(FINDINGS_NOTICES_HEADER))
+  const complete = headers.get(INSPECTION_COMPLETE_HEADER)
+  if (errors === undefined || notices === undefined || complete === null) return undefined
+  return {errors, notices, complete: complete.trim().toLowerCase() === 'true'}
+}
+
+/**
+ * Turn a rejected inspection into the right error.
+ *
+ * The `code` decides this, not the status. The statuses have moved once already
+ * — missing and non-string content answered 422 before they answered 400, and an
+ * oversize body now answers 413 — while the codes are the stable half of the
+ * contract. The status is only a fallback for a response that carries no code.
+ *
+ * What is being decided is whose fault the refusal is. Only
+ * `unparseable_document` says anything about the user's file; an unsupported
+ * release is a gap in Tediware's reference data and `inspection_failed` is a bug
+ * on the server, so neither may fail a build the way findings do.
+ */
+function inspectionRefusal(fault: ServerFault): TediError {
+  const detail = fault.message ? `: ${fault.message}` : ''
+  switch (fault.code) {
+    case 'unparseable_document':
+      return new UnreadableDocumentError(fault.message)
+    case 'unsupported_release':
+      return new UnsupportedReleaseError(fault.message)
+    case 'inspection_failed':
+      return new InspectionUnavailableError(fault.message)
+    case 'content_too_large':
+      // The CLI refuses oversized documents before uploading, so getting this
+      // back means the server's cap is now lower than the one this build knows.
+      return new TediError(fault.message || 'The server rejected this interchange as too large.', {
+        suggestions: [
+          `This build refuses anything over ${MAX_INSPECT_BYTES / 1024} KB before uploading, so the server's limit has moved — run \`tedi update\` for a build that knows the current one.`,
+        ],
+      })
+    case 'invalid_parameter':
+    case 'invalid_variant':
+    case 'missing_parameter':
+      // The CLI builds every part of this request bar the document itself.
+      return new TediError(`The Tediware API rejected this request (${fault.code})${detail}.`, {
+        suggestions: [
+          'This is a fault in the CLI rather than in your document — run `tedi update`, and report it if a current version still fails.',
+        ],
+      })
+    default:
+      // No code, or one this build has not heard of. A 422 has always meant the
+      // document could not be read; anything else is not about the document.
+      if (fault.status === 422) return new UnreadableDocumentError(fault.message)
+      return new TediError(`The Tediware API refused this inspection (HTTP ${fault.status})${detail}.`)
+  }
+}
 
 /** Shape of an entry in the `releases` response (`data.releases[]`). */
 interface RawRelease {
@@ -283,19 +405,65 @@ export class HttpApiClient implements ApiClient {
     return this.opts.token ? {authorization: `Key ${this.opts.token}`} : {}
   }
 
-  /** Best-effort extraction of the server's error message (string or `{code,message}`). */
-  private async readErrorMessage(res: Response): Promise<string> {
+  /**
+   * `fetchWithTimeout`, with an unreachable server turned into something the
+   * user can act on.
+   *
+   * Left alone, a DNS miss, a refused connection, or a stalled request escapes
+   * as a raw `TypeError: fetch failed`. That is not a `TediError`, so it reaches
+   * the user as a stack trace and oclif exits 1 for it — telling a CI job the
+   * document is bad when the CLI never got as far as asking about it. The whole
+   * point of the 1/2 split is to not say that.
+   */
+  private async send(url: string | URL, opts: FetchOptions = {}): Promise<Response> {
     try {
-      const body = (await res.json()) as {error?: unknown}
-      const err = body?.error
-      if (typeof err === 'string') return err
-      if (err && typeof err === 'object' && typeof (err as {message?: unknown}).message === 'string') {
-        return (err as {message: string}).message
+      return await fetchWithTimeout(url, opts)
+    } catch (err) {
+      const name = err instanceof Error ? err.name : ''
+      const whereToLook = `Confirm api.baseUrl points where you expect — currently ${this.base} (\`tedi config get api.baseUrl\`).`
+      if (name === 'TimeoutError' || name === 'AbortError') {
+        throw new TediError(`The Tediware API at ${this.base} did not respond in time.`, {
+          suggestions: ['The server may be busy or unreachable; try again in a moment.', whereToLook],
+        })
       }
-    } catch {
-      // Non-JSON or empty body; fall through to a generic message.
+      // Node hides the useful part (ECONNREFUSED, ENOTFOUND) in `cause`.
+      const code = (err as {cause?: {code?: unknown}} | undefined)?.cause?.code
+      throw new TediError(
+        `Could not reach the Tediware API at ${this.base}${typeof code === 'string' ? ` (${code})` : ''}.`,
+        {suggestions: ['Check your network connection, and any proxy or VPN in the way.', whereToLook]},
+      )
     }
-    return ''
+  }
+
+  /**
+   * Best-effort read of the server's account of a refusal.
+   *
+   * Two body shapes are in play (API.md): the flat `{error, code}` the
+   * controllers return, and the platform throttle envelope, where `error` is
+   * itself an object carrying `message` and `code`. Both are read here so the
+   * caller never has to care which one it got.
+   */
+  private async readFault(res: Response): Promise<ServerFault> {
+    const fault: ServerFault = {message: '', status: res.status}
+    try {
+      const body = (await res.json()) as {error?: unknown; code?: unknown}
+      const err = body?.error
+      if (typeof err === 'string') fault.message = err
+      else if (err && typeof err === 'object') {
+        const nested = err as {message?: unknown; code?: unknown}
+        if (typeof nested.message === 'string') fault.message = nested.message
+        if (typeof nested.code === 'string') fault.code = nested.code
+      }
+      if (typeof body?.code === 'string') fault.code = body.code
+    } catch {
+      // Non-JSON or empty body; the caller falls back to a generic message.
+    }
+    return fault
+  }
+
+  /** Best-effort extraction of just the server's error message. */
+  private async readErrorMessage(res: Response): Promise<string> {
+    return (await this.readFault(res)).message
   }
 
   /**
@@ -308,12 +476,11 @@ export class HttpApiClient implements ApiClient {
       case 413:
       case 422:
         // Request-shaped failures. Only `inspect` can legitimately produce one,
-        // since its payload is the user's file. The server uses 422 today; 400
-        // and 413 route here too so an oversized or differently-classified
-        // rejection still reads as a document problem. For reference lookups the
-        // CLI controls every parameter, so these are bugs: fall through to the
-        // generic error, which keeps the status visible.
-        if (ctx.rejected) throw ctx.rejected(await this.readErrorMessage(res))
+        // since its payload is the user's file; it reads the `code` to work out
+        // whose fault the refusal is. For reference lookups the CLI controls
+        // every parameter, so these are bugs: fall through to the generic error,
+        // which keeps the status visible.
+        if (ctx.rejected) throw ctx.rejected(await this.readFault(res))
         break
       case 401:
         // A 401 with a key in hand means the server rejected that key (wrong key,
@@ -356,12 +523,13 @@ export class HttpApiClient implements ApiClient {
     const url = new URL(
       `${this.base}/api/x12/${encodeURIComponent(req.release)}/${resource}/${encodeURIComponent(code)}/download`,
     )
-    // The CLI always sends an explicit variant (the server would otherwise default
-    // to markdown). `color` is only meaningful for the console variant.
+    // The CLI always sends an explicit variant and never leans on the server's
+    // default, which has changed once already (markdown, now console — matching
+    // the inspect endpoint). `color` is only meaningful for the console variant.
     url.searchParams.set('variant', req.format)
     if (req.color) url.searchParams.set('color', 'true')
 
-    const res = await fetchWithTimeout(url, {headers: this.authHeaders()})
+    const res = await this.send(url, {headers: this.authHeaders()})
     if (!res.ok) await this.throwForStatus(res, {reference: {kind, code, release: req.release}})
 
     const body = await res.text()
@@ -383,7 +551,7 @@ export class HttpApiClient implements ApiClient {
   async x12Releases(): Promise<ReleaseInfo[]> {
     // `releases` is reachable without a key, but API.md asks us to send the header
     // anyway so usage counts against the per-key limit rather than only the per-IP one.
-    const res = await fetchWithTimeout(`${this.base}/api/x12/releases`, {headers: this.authHeaders()})
+    const res = await this.send(`${this.base}/api/x12/releases`, {headers: this.authHeaders()})
     if (!res.ok) await this.throwForStatus(res)
     const payload = (await res.json()) as {data?: {releases?: RawRelease[]}}
     return (payload.data?.releases ?? []).map((r) => ({
@@ -398,6 +566,10 @@ export class HttpApiClient implements ApiClient {
    * platform. The document is uploaded verbatim (the command decides whether to
    * obfuscate first); the server parses it, validates against the licensed X12
    * standard, and returns the rendered report as text.
+   *
+   * A document the server could read answers 200 however broken it is: what it
+   * got wrong comes back as findings, summarized in the response headers. A
+   * non-2xx means the inspection did not happen at all.
    */
   async ediInspect(content: string, req: InspectionRequest): Promise<InspectedEdi> {
     if (!this.opts.token) throw new NotAuthenticatedError()
@@ -408,7 +580,7 @@ export class HttpApiClient implements ApiClient {
     // it, and only means anything for the console variant.
     if (req.color) body.color = true
 
-    const res = await fetchWithTimeout(`${this.base}/api/edi/inspect`, {
+    const res = await this.send(`${this.base}/api/edi/inspect`, {
       method: 'POST',
       headers: {...this.authHeaders(), 'content-type': 'application/json'},
       body: JSON.stringify(body),
@@ -416,7 +588,7 @@ export class HttpApiClient implements ApiClient {
     })
     if (!res.ok) {
       await this.throwForStatus(res, {
-        rejected: (message) => new InspectionFailedError(message),
+        rejected: inspectionRefusal,
         missing: () =>
           new TediError(`The server at ${this.base} has no EDI inspection endpoint (HTTP 404).`, {
             suggestions: [
@@ -427,7 +599,10 @@ export class HttpApiClient implements ApiClient {
       })
     }
 
-    return {format: req.format, body: await res.text()}
+    // The report is for the user; the headers are what the caller's exit code
+    // turns on, since the rendered body is the server's to format and not
+    // something to parse counts back out of.
+    return {format: req.format, body: await res.text(), findings: readFindings(res.headers)}
   }
 
   async whoami(): Promise<Identity> {

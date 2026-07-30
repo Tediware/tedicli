@@ -95,7 +95,10 @@ Path parameters:
 Query parameters:
 
 - `variant=console|markdown`. The CLI should always send an explicit variant. If
-  omitted, the server defaults to `markdown`.
+  omitted, the server defaults to `console` (it defaulted to `markdown` until
+  both endpoints were moved onto one shared vocabulary and default). Omitting it
+  therefore yields `text/plain` and a `.txt` filename, not markdown — which is
+  exactly why the CLI never omits it.
 - `color=true` colors the `console` variant only. Send it only when stdout is an
   interactive terminal and `NO_COLOR` is unset and `--no-color` was not passed.
   See "Color" below.
@@ -134,8 +137,7 @@ JSON body:
   (262,144 bytes); the CLI checks the size before uploading so an oversized file
   fails immediately rather than after the transfer.
 - `variant` — `console` or `markdown`. The CLI always sends an explicit variant;
-  the server defaults to `console` here (note: the opposite of the reference
-  endpoints, which default to `markdown`).
+  the server defaults to `console`, as the reference endpoints now do too.
 - `color` — `true` colors the `console` variant only, under the same rule as the
   reference endpoints. See "Color" below.
 
@@ -157,6 +159,32 @@ in the thin CLI.
 A document with problems is still a `200`: structural faults are reported as
 findings, not as an error status. See "Inspection errors" below for the line
 between the two.
+
+#### Findings headers
+
+Every `200` — both variants — also summarizes itself in response headers, so a
+caller can act on the outcome without parsing the rendered report:
+
+```
+X-Edi-Findings-Errors: 3
+X-Edi-Findings-Notices: 0
+X-Edi-Inspection-Complete: true
+```
+
+They are **absent on every non-`200`**, and absence must never be read as zero.
+
+`X-Edi-Inspection-Complete` is `true` or `false`, and it is not redundant with
+the counts: a gate built on the counts alone is wrong. The inspection is
+deliberately fail-soft. If the framing check crashes its findings vanish with no
+trace in the report, and if standard validation crashes it degrades to a single
+notice — either way a document nobody examined comes back with zero errors.
+`false` means at least one check did not run, so the report is not evidence of
+anything. A check skipped *on purpose* (the envelope check, when the parse
+stopped early) leaves it `true`, because the finding that justified the skip is
+in the report.
+
+The CLI treats a missing, partial, or malformed set of headers as "unknown", not
+as "clean", and exits `2` for it (see "Exit codes" below).
 
 Backs: `tedi edi inspect <file>`.
 
@@ -194,17 +222,24 @@ endpoint; nothing structured comes back.)
 
 ## Error contract
 
-Controller errors return `{ "error": "<message>" }` (a string). The `429`
-response is the one exception: it uses the platform throttle envelope
-`{ "error": { "message": "...", "code": "rate_limited" } }`. Branch on the HTTP
-status code, not the body shape.
+Controller errors return a flat `{ "error": "<message>", "code": "<code>" }` —
+a human message plus a stable machine code. This is not the platform's nested
+envelope. The `429` response is the exception: it uses the throttle envelope
+`{ "error": { "message": "...", "code": "rate_limited" } }`. Auth (`401`/`403`)
+and throttle (`429`) responses carry no `code` of the flat kind at all, so they
+are told apart by status.
+
+Where a `code` is present it is the thing to branch on: the statuses have moved
+once already (see "Inspection errors"), while the codes are the stable half of
+the contract. Never branch on the body *shape*.
 
 ```
 +--------+----------------------------------+---------------------------------------------+
 | Status | Condition                        | Body                                        |
 +--------+----------------------------------+---------------------------------------------+
 | 200    | Success                          | rendered text (or JSON for /releases)       |
-| 400    | Unrecognized variant             | { "error": "Unknown variant '...'. ..." }   |
+| 400    | Unrecognized variant             | { "error": "Unknown variant '...'. ...",    |
+|        |                                  |   "code": "invalid_variant" }               |
 | 401    | Missing or invalid key           | { "error": "Not authenticated" }            |
 |        |                                  | or { "error": "Invalid API key" }           |
 | 403    | Key's organization is disabled   | { "error": "Account unavailable" }          |
@@ -231,36 +266,88 @@ Suggested CLI handling:
 ### Inspection errors
 
 Inspection adds a class the reference endpoints don't have: the payload is the
-user's own file, so a rejection is usually something the user can act on rather
-than a CLI bug.
+user's own file, so a rejection may be something the user can act on rather than
+a CLI bug — but most of them aren't, and the `code` is what says which.
 
-The dividing line is *readability*, not correctness. A document the parser can
-read comes back `200` however broken it is — an unclosed interchange or an
-`SE`-count mismatch is a **finding in the report**, not an error status. `422` is
-reserved for documents that cannot be read as EDI at all.
+**The rule that matters: a document that could be read answers `200` no matter
+how broken it is.** Everything wrong with it arrives as findings — an unclosed
+interchange or an `SE`-count mismatch is a **finding in the report**, not an
+error status. A non-`2xx` means the inspection did not happen.
 
 ```
-+---------+--------------------------------------+-------------------------------------------+
-| Status  | Condition                            | Body                                      |
-+---------+--------------------------------------+-------------------------------------------+
-| 422     | Missing/empty `edi_content`          | { "error": "EDI content is required." }   |
-| 422     | Not readable as EDI (e.g. no ISA)    | { "error": "<envelope diagnosis>" }       |
-| 422     | Release in the envelope unsupported  | { "error": "Unsupported X12 release. ..." }|
-| 400     | Unrecognized variant                 | { "error": "Unknown variant '...'. ..." } |
-| ?       | `edi_content` over 256 KB            | not observed — the CLI refuses first      |
-+---------+--------------------------------------+-------------------------------------------+
++---------+-----------------------+---------------------------------------------------+
+| Status  | Code                  | Meaning                                           |
++---------+-----------------------+---------------------------------------------------+
+| 400     | missing_parameter     | No edi_content sent.                              |
+| 400     | invalid_parameter     | edi_content was not a string.                     |
+| 400     | invalid_variant       | variant not console|markdown.                     |
+| 413     | content_too_large     | Body over 256 KB.                                 |
+| 422     | unparseable_document  | Could not be read as EDI.                         |
+| 422     | unsupported_release   | Read fine, no reference data for that release.    |
+| 422     | inspection_failed     | A bug on the server side.                         |
++---------+-----------------------+---------------------------------------------------+
 ```
 
-The `422`s above were confirmed against a running server. The oversize status was
-not, because the CLI checks the limit client-side and never sends one; it also
-maps `400`, `413`, and `422` on this endpoint to the same user-facing error, so
-it stays correct if the server picks a different code for that case.
+Three of these statuses moved: missing and non-string `edi_content` answered
+`422` before they answered `400`, and an oversize body answered `422` before it
+answered `413`. Key on `code`, not status — the CLI does, and falls back to the
+status only for a response carrying no code (where a `422` keeps its historic
+meaning of "could not be read as EDI").
 
-The CLI prints the server's message verbatim for those. That is safe: on a parse
+So `422` means the document, *except* for the two codes that don't: an
+`unsupported_release` is a gap in Tediware's reference data and an
+`inspection_failed` is a bug on the server. Neither is a defect in the user's
+document and neither may fail their build.
+
+The CLI prints the server's message verbatim for these. That is safe: on a parse
 failure the server renders an envelope diagnosis rather than the raw parser
-error, which could otherwise quote data from the file being inspected. Credential
-(`401`/`403`) and throttle (`429`) responses behave exactly as in the table
-above.
+error, which could otherwise quote data from the file being inspected.
+
+Credential (`401`/`403`) and throttle (`429`) responses are unchanged, carry no
+`code`, and are distinguished by status: `401` missing or invalid key, `403`
+disabled organization or unaccepted service terms, `429` rate limited (honor
+`Retry-After`).
+
+The CLI never sends `missing_parameter` or `content_too_large` in normal use: it
+refuses an empty document and one over the cap locally, before uploading. Getting
+either back therefore means the CLI is at fault or its cap is stale, and it says
+so rather than blaming the file.
+
+### Exit codes
+
+Server-side policy stops at reporting facts; how they map to an exit code is the
+CLI's decision, and this is it. The split that matters to a CI job is between a
+bad document and a tool that could not run — collapsing them means an expired API
+key gets reported as a broken file.
+
+```
++------+---------------------------------------------------------------------+
+| Exit | Condition                                                           |
++------+---------------------------------------------------------------------+
+| 0    | 200, errors == 0, complete == true                                  |
+| 1    | 200 and errors > 0  (plus notices, with --fail-on notice)           |
+| 1    | 422 unparseable_document                                            |
+| 2    | complete == false and nothing counted as a failure                  |
+| 2    | 200 with no findings headers — unknown is not zero                  |
+| 2    | 422 unsupported_release, 422 inspection_failed                      |
+| 2    | 400, 401, 403, 413, 429, 5xx, transport failure, local usage errors |
++------+---------------------------------------------------------------------+
+```
+
+`1` is reserved for a verdict on the input: the document has findings, the server
+could not read it, or (for reference lookups) the code does not exist. Everything
+else is `2`, which is also oclif's default, so a mistyped flag already lands
+there. `--fail-on=error|notice` chooses whether notices count toward `1`; it
+defaults to `error`.
+
+Note the first `2`: findings outrank an incomplete run. A crashed check loses
+findings, it never invents them, so `errors > 0` with `complete == false` exits
+`1` — a real verdict, with the incompleteness noted on stderr as a caveat. Only
+a *silent* incomplete run (nothing found, so nothing to stand on) exits `2`.
+
+On every `200` the report prints in full before the exit code is decided, whatever
+that code turns out to be. On a non-`2xx` there is no report to print: the
+server's diagnosis goes to stderr as an error instead.
 
 ## Rate limits
 
