@@ -50,12 +50,20 @@ jobs:
       # Create the GitHub Release first (idempotently). It is the source of
       # `tedi update`'s changelog, and doing it before publish keeps a failed
       # publish safely re-runnable instead of orphaning npm/Release state.
+      # Notes come from the commit log, not --generate-notes: that builds its list
+      # from merged PRs, and this repo commits straight to main, so every release
+      # body was a bare "Full Changelog" link — which is what `tedi update` shows
+      # users under "What's new".
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; leaving its notes alone."
+          else
+            node scripts/release-notes.mjs "$GITHUB_REF_NAME" > /tmp/release-notes.md
+            gh release create "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md --verify-tag
+          fi
 
       # No NODE_AUTH_TOKEN: authentication is handled by OIDC trusted publishing.
       # access:public comes from publishConfig; --provenance is requested explicitly
