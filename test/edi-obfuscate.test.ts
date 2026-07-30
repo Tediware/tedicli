@@ -6,7 +6,13 @@ import {afterEach, beforeEach, describe, it} from 'node:test'
 
 import {runCommand} from '@oclif/test'
 
-import {NotAnInterchangeError, obfuscateInterchange} from '../src/lib/edi-obfuscate.js'
+import {
+  DifferentDelimitersError,
+  MalformedIsaError,
+  NotAnInterchangeError,
+  obfuscateInterchange,
+} from '../src/lib/edi-obfuscate.js'
+import {EXIT_DEFECT, EXIT_UNUSABLE} from '../src/lib/errors.js'
 
 // Keep the update-check plugin from doing background network work during tests.
 process.env.TEDI_SKIP_NEW_VERSION_CHECK = '1'
@@ -271,7 +277,101 @@ describe('obfuscateInterchange', () => {
 
   it('refuses a later interchange that declares different delimiters', () => {
     const mixed = INTERCHANGE + 'ISA|00|          |00|          |ZZ|SENDER~'
-    assert.throws(() => obfuscateInterchange(mixed, {seed: 's'}), /delimiters differ from the first/)
+    assert.throws(() => obfuscateInterchange(mixed, {seed: 's'}), DifferentDelimitersError)
+    assert.throws(() => obfuscateInterchange(mixed, {seed: 's'}), /will not parse with the first one's delimiters/)
+  })
+
+  it('names a malformed first ISA as malformed, not as a delimiter mismatch', () => {
+    // ISA14 dropped, so the header splits into 15 elements instead of 16. The
+    // file holds a single interchange, so "split the file so each interchange is
+    // its own file" would be unactionable advice.
+    const dropped = INTERCHANGE.replace(
+      'ISA*00*          *00*          *ZZ*SENDERID12345  *ZZ*RECEIVERID1234 *240101*1200*>*00501*000000001*0*T*:',
+      'ISA*00*          *00*          *ZZ*SENDERID12345  *ZZ*RECEIVERID1234 *240101*1200*>*00501*000000001*T*:',
+    )
+    assert.throws(() => obfuscateInterchange(dropped, {seed: 's'}), MalformedIsaError)
+    assert.throws(() => obfuscateInterchange(dropped, {seed: 's'}), (err: Error) => {
+      assert.match(err.message, /ISA header is malformed/)
+      assert.doesNotMatch(err.message, /delimiters differ/)
+      // The old advice was unactionable here: there is only one interchange.
+      assert.doesNotMatch((err as MalformedIsaError).suggestions.join(' '), /Split the file/)
+      return true
+    })
+  })
+
+  it('refuses a header whose delimiters read as alphanumeric rather than scrubbing nothing', () => {
+    // A dropped ISA separator can shift the fixed-width read onto GS01, so the
+    // segment terminator is detected as a letter. Splitting the body on that
+    // letter leaves no chunk carrying an `ISA` id, so the guard in
+    // transformSegment never matches and every rule is skipped: the run used to
+    // return success, 0 values obfuscated, and the file byte-identical to input.
+    const isaBad =
+      'ISA*00*          *00*          *ZZ*SENDERID12345  *ZZ*RECEIVERID1234 *240101*1200*>*00501*000000001*T*:'
+    const file =
+      [
+        isaBad,
+        'GS*FA*SENDERID*RECEIVERID*20240101*1200*1*X*005010',
+        'ST*997*0001',
+        'NM1*IL*1*DOE*JANE*Q***MI*MBR123456789',
+        'SE*4*0001',
+        'GE*1*1',
+        'IEA*1*000000001',
+      ].join('~\n') + '~\n'
+
+    assert.throws(() => obfuscateInterchange(file, {seed: 's'}), MalformedIsaError)
+    assert.throws(() => obfuscateInterchange(file, {seed: 's'}), /never alphanumeric/)
+  })
+
+  it('refuses an ISA that runs straight into its GS with no segment terminator', () => {
+    // ISA16 is correct here, so the header looks well-formed; only the character
+    // after it is wrong. The first chunk then parses as a valid ISA while the
+    // rest of the file is tokenized against a letter and silently left unscrubbed.
+    const isa =
+      'ISA*00*          *00*          *ZZ*SENDERID12345  *ZZ*RECEIVERID1234 *240101*1200*>*00501*000000001*0*T*:'
+    const file =
+      isa +
+      ['GS*HC*SENDERID*RECEIVERID*20240101*1200*1*X*005010', 'NM1*IL*1*DOE*JANE*Q***MI*MBR123456789', 'IEA*1*1'].join(
+        '~\n',
+      ) +
+      '~\n'
+
+    assert.throws(() => obfuscateInterchange(file, {seed: 's'}), MalformedIsaError)
+  })
+
+  it('names an extra element separator as a shape fault, not as truncation', () => {
+    const doubled = INTERCHANGE.replace('*000000001*0*T*:', '*000000001**0*T*:')
+    assert.throws(() => obfuscateInterchange(doubled, {seed: 's'}), MalformedIsaError)
+    assert.throws(() => obfuscateInterchange(doubled, {seed: 's'}), (err: Error) => {
+      assert.doesNotMatch(err.message, /truncated/, 'an over-long header is the opposite of truncated')
+      return true
+    })
+  })
+
+  it('still scrubs an ISA whose fields are unpadded but structurally intact', () => {
+    // Short-but-complete ISAs turn up in the wild. The malformed-ISA check keys
+    // on element count, not on the fixed 105-char width, so these must survive.
+    const unpadded = INTERCHANGE.replace(
+      'ISA*00*          *00*          *ZZ*SENDERID12345  *ZZ*RECEIVERID1234 *240101*1200*>*00501*000000001*0*T*:',
+      'ISA*00*  *00*  *ZZ*SENDERID12345*ZZ*RECEIVERID1234*240101*1200*>*00501*000000001*0*T*:',
+    )
+    const res = obfuscateInterchange(unpadded, {seed: 's'})
+    assert.ok(!res.output.includes('MBR123456789'))
+  })
+
+  it('treats a malformed ISA as a defect, but a delimiter mismatch as unrunnable', () => {
+    // The split matters in CI: one is a verdict on the document, the other is a
+    // limit of the single-pass scrub.
+    const dropped = INTERCHANGE.replace('*000000001*0*T*:', '*000000001*T*:')
+    assert.throws(() => obfuscateInterchange(dropped), (err: MalformedIsaError) => {
+      assert.ok(err instanceof MalformedIsaError)
+      assert.equal(err.exitCode, EXIT_DEFECT)
+      return true
+    })
+    const mixed = INTERCHANGE + 'ISA|00|          |00|          |ZZ|SENDER~'
+    assert.throws(() => obfuscateInterchange(mixed), (err: DifferentDelimitersError) => {
+      assert.equal(err.exitCode, EXIT_UNUSABLE)
+      return true
+    })
   })
 })
 

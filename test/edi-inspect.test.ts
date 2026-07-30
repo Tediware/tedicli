@@ -347,6 +347,17 @@ describe('edi inspect', () => {
     assert.equal(sent.length, 0)
   })
 
+  it('checks auth before scrubbing, so it never reports work for an upload it cannot make', async () => {
+    const sent = stubFetch()
+    await rm(join(dir, 'credentials.json'))
+    const {error, stderr} = await run(['edi', 'inspect', file])
+    // Assert the expected failure, so the absence checks below cannot pass
+    // vacuously by way of the command failing earlier for some other reason.
+    assert.match(error?.message ?? '', /not signed in/i)
+    assert.doesNotMatch(stderr, /before upload/, 'announced a scrub for an upload that never happens')
+    assert.equal(sent.length, 0)
+  })
+
   it('fails clearly when the file does not exist', async () => {
     const sent = stubFetch()
     const {error} = await run(['edi', 'inspect', join(dir, 'nope.edi')])

@@ -52,6 +52,57 @@ export class NotAnInterchangeError extends TediError {
   }
 }
 
+/**
+ * Raised when the file's own ISA header is the wrong shape — typically a dropped
+ * or extra element separator.
+ *
+ * Deliberately distinct from {@link DifferentDelimitersError}: that one is about
+ * a *later* interchange disagreeing with the first, and its way forward (split
+ * the file) is meaningless for a file whose only ISA is malformed.
+ */
+export class MalformedIsaError extends TediError {
+  // The default reason deliberately quotes no element count: a malformed header
+  // also throws off the delimiter detection that would have to produce that
+  // count, so any number here could be as wrong as the message it replaced.
+  constructor(reason = 'it does not split into the 16 elements X12 fixes it at') {
+    super(`The ISA header is malformed: ${reason}.`, {
+      suggestions: [
+        'A dropped or extra element separator is the usual cause. It shifts every field after it, including the delimiters this tool reads out of the header.',
+      ],
+      // A verdict on the input, like NotAnInterchangeError: the scrub read the
+      // header and it is malformed. (`edi inspect` re-words this to "could not
+      // run", since the server diagnoses envelopes more thoroughly.)
+      exitCode: EXIT_DEFECT,
+    })
+    this.name = 'MalformedIsaError'
+  }
+}
+
+/**
+ * Raised when a second or later ISA will not parse with the first one's
+ * delimiters. Exits "could not run" rather than "defect": differing delimiters
+ * are perfectly legal, so this is a limit of the single-pass scrub rather than a
+ * verdict on the file.
+ *
+ * The message says "will not parse with" rather than "declares different
+ * delimiters" on purpose. Both a genuine delimiter change and a malformed later
+ * ISA arrive here looking identical, and the advice converges anyway: split the
+ * file, and a malformed one then earns its own {@link MalformedIsaError}.
+ */
+export class DifferentDelimitersError extends TediError {
+  constructor() {
+    super(
+      "This file contains a later interchange that will not parse with the first one's delimiters; it cannot be obfuscated safely in one pass.",
+      {
+        suggestions: [
+          'Split the file so each ISA..IEA interchange is its own file, then obfuscate each one. If one of them is itself malformed, that will be reported against the file it is in.',
+        ],
+      },
+    )
+    this.name = 'DifferentDelimitersError'
+  }
+}
+
 export interface ObfuscateOptions {
   /** Seed for reproducible output. Omitted → a fresh random key per run. */
   seed?: string
@@ -249,15 +300,47 @@ function readDelimiters(input: string, isaStart: number): Delimiters {
   // A valid ISA is 106 characters; a 120-char window covers it with slack, and
   // splitting the window on the element separator yields ISA01..ISA16 directly.
   const parts = input.slice(isaStart, isaStart + 120).split(element)
-  const isa16 = parts[16]
-  if (element === '' || parts.length < 17 || isa16 === undefined || isa16.length < 2) {
+  if (element === '' || parts.length < 17) {
     throw new NotAnInterchangeError('the ISA segment is truncated.')
+  }
+
+  const isa16 = parts[16]
+  if (isa16 === undefined || isa16.length < 2) {
+    // There were enough separators to reach ISA16, but the field that should
+    // hold the component separator and the segment terminator does not. An
+    // *extra* element separator shifts every field left and lands here, so this
+    // is a shape fault rather than the truncation checked above.
+    throw new MalformedIsaError('its fixed-width span does not end in a component separator and a segment terminator')
   }
 
   const isa11 = parts[11] ?? ''
   const repetition = isa11.length === 1 && !/[A-Za-z0-9 ]/.test(isa11) ? isa11 : undefined
 
-  return {element, component: isa16.charAt(0), repetition, segment: isa16.charAt(1)}
+  const delims = {element, component: isa16.charAt(0), repetition, segment: isa16.charAt(1)}
+
+  // X12 delimiters are punctuation by convention, precisely so they cannot
+  // collide with data. An alphanumeric one here means the fixed-width read
+  // landed on content instead: a malformed ISA, or one running straight into
+  // its GS with no segment terminator between them.
+  //
+  // This has to fail loudly, because carrying on fails *silently*. Tokenizing
+  // the file against the wrong terminator means no chunk retains an `ISA` id, so
+  // the guard in transformSegment never matches, no scrub rule ever fires, and
+  // the run reports success while handing back the file with its PII intact —
+  // which `edi inspect` would then upload.
+  for (const [what, char] of [
+    ['element separator', delims.element],
+    ['component separator', delims.component],
+    ['segment terminator', delims.segment],
+  ] as const) {
+    if (/[A-Za-z0-9]/.test(char)) {
+      throw new MalformedIsaError(
+        `the ${what} read out of it is "${char}", and X12 delimiters are never alphanumeric`,
+      )
+    }
+  }
+
+  return delims
 }
 
 type ElementRule = (e: string[], sub: Substitutor) => void
@@ -368,6 +451,9 @@ export function obfuscateInterchange(input: string, opts: ObfuscateOptions = {})
 
   let valuesObfuscated = 0
   let segmentCount = 0
+  // Which ISA we are looking at. The first one is where `delims` came from, so
+  // a fault there is the header's own; a later one may simply disagree.
+  let interchanges = 0
 
   const scrubPiece = (piece: string) =>
     SSN_PATTERN.test(piece) || EMAIL_PATTERN.test(piece) ? sub.substitute(piece) : piece
@@ -376,15 +462,27 @@ export function obfuscateInterchange(input: string, opts: ObfuscateOptions = {})
     const elements = content.split(delims.element)
     segmentCount++
 
-    // One file can carry several ISA..IEA interchanges, and each ISA declares
-    // its own delimiters. Mis-parsing a later interchange would silently leak
-    // its PII, so require every ISA to match the first one's delimiters.
+    // Guard the ISA specifically: mis-reading one would skip its scrub rules and
+    // leak ISA02/ISA04. Matched with `startsWith` rather than `===` so a near-miss
+    // id is caught here instead of silently falling through as an unknown segment.
     const id = elements[0] ?? ''
-    if (id.startsWith('ISA') && (id !== 'ISA' || elements.length !== 17 || elements[16] !== delims.component)) {
-      throw new TediError(
-        'This file contains an interchange whose delimiters differ from the first; it cannot be obfuscated safely in one pass.',
-        {suggestions: ['Split the file so each ISA..IEA interchange is its own file, then obfuscate each one.']},
-      )
+    if (id.startsWith('ISA')) {
+      interchanges++
+      // Splitting a well-formed ISA yields the id plus its 16 elements.
+      const wellFormed = id === 'ISA' && elements.length === 17 && elements[16] === delims.component
+      if (!wellFormed) {
+        // One file can carry several ISA..IEA interchanges, each declaring its
+        // own delimiters. A later ISA that doesn't line up cannot be diagnosed
+        // from here — its own separators leave it unsplittable by the first
+        // one's, which looks the same whether it changed delimiters or is simply
+        // malformed — so the error says only what is certain.
+        if (interchanges > 1) throw new DifferentDelimitersError()
+        // The first ISA is the one `delims` was read from, so a fault here is
+        // the header's own, and "split the file" would be unactionable advice.
+        // (`id` is necessarily "ISA" at this point — the element separator is by
+        // definition the character at offset 3 — so only the shape can be wrong.)
+        throw new MalformedIsaError()
+      }
     }
 
     const before = elements.slice()

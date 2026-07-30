@@ -40,6 +40,55 @@ export function assertConfigKey(key: string): asserts key is ConfigKey {
   }
 }
 
+/**
+ * Validate `api.baseUrl`.
+ *
+ * Exported on its own because the value has three sources and only one of them
+ * passes through `config set`: `TEDI_API_BASE_URL` and a hand-edited config.json
+ * reach the client directly. Without a check at the point of use, an unusable
+ * value surfaces as a bare `TypeError: Invalid URL` from node's fetch.
+ */
+export function assertValidBaseUrl(value: string): void {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    throw new TediError(`api.baseUrl is not a valid URL: ${value}`, {
+      suggestions: [
+        'Set it to a full URL including the scheme, e.g. `tedi config set api.baseUrl https://tediware.com`.',
+        'Run `tedi config list` to see the effective value and where it comes from — TEDI_API_BASE_URL overrides the stored config.',
+      ],
+    })
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new TediError(`api.baseUrl must be an http or https URL, but its scheme is "${url.protocol}": ${value}`, {
+      suggestions: ['Use https for the Tediware platform, or http for a local development server.'],
+    })
+  }
+}
+
+/**
+ * Release codes are six digits (API.md: "`:release` is the release code, e.g.
+ * `004010`"). Only the shape is checked: which six-digit codes actually exist is
+ * the server's to answer, and an allowlist here would go stale the moment a
+ * release is published. A well-formed but unknown code still round-trips to a
+ * clean 404 pointing at `tedi x12 releases`.
+ */
+export function assertValidRelease(value: string): void {
+  if (!/^\d{6}$/.test(value)) {
+    throw new TediError(`x12.release must be a six-digit release code, e.g. 004010 — got: ${value}`, {
+      suggestions: ['Run `tedi x12 releases` to list the releases the platform carries.'],
+    })
+  }
+}
+
+/** Validate a value before it is persisted, so a typo fails now rather than on the next lookup. */
+export function assertConfigValue(key: ConfigKey, value: string): void {
+  if (key === 'api.baseUrl') assertValidBaseUrl(value)
+  if (key === 'x12.release') assertValidRelease(value)
+}
+
 export class ConfigStore {
   private readonly file: string
   private cache: Record<string, string> | undefined

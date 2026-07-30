@@ -103,6 +103,47 @@ describe('commands (authenticated)', () => {
     assert.match(error!.message, /Unknown configuration key/)
   })
 
+  it('config set rejects a value that is not a URL, rather than storing it', async () => {
+    const {error} = await run(['config', 'set', 'api.baseUrl', 'not-a-url'])
+    assert.ok(error, 'expected an error')
+    assert.match(error!.message, /not a valid URL/)
+    // The bad value must not have been persisted on the way to failing.
+    const get = await run(['config', 'get', 'api.baseUrl'])
+    assert.doesNotMatch(get.stdout, /not-a-url/)
+  })
+
+  it('config set rejects a non-http scheme', async () => {
+    const {error} = await run(['config', 'set', 'api.baseUrl', 'file:///etc/passwd'])
+    assert.ok(error)
+    assert.match(error!.message, /http or https/)
+  })
+
+  it('config set rejects a malformed release code', async () => {
+    const {error} = await run(['config', 'set', 'x12.release', 'not-a-release'])
+    assert.ok(error)
+    assert.match(error!.message, /six-digit release code/)
+  })
+
+  it('config set still accepts well-formed values', async () => {
+    assert.equal((await run(['config', 'set', 'api.baseUrl', 'http://localhost:5004'])).error, undefined)
+    assert.equal((await run(['config', 'set', 'x12.release', '005010'])).error, undefined)
+  })
+
+  it('an unusable api.baseUrl from the environment fails with a real message', async () => {
+    // config set is not the only way in: TEDI_API_BASE_URL and a hand-edited
+    // config.json reach the client directly, where a bad value used to escape as
+    // a bare `TypeError: Invalid URL` out of fetch.
+    process.env.TEDI_API_BASE_URL = 'not-a-url'
+    try {
+      const {error} = await run(['x12', 'seg', 'N1'])
+      assert.ok(error, 'expected an error')
+      assert.match(error!.message, /api\.baseUrl is not a valid URL/)
+      assert.doesNotMatch(error!.message, /Invalid URL/)
+    } finally {
+      delete process.env.TEDI_API_BASE_URL
+    }
+  })
+
   it('x12 releases lists supported releases', async () => {
     const {stdout, error} = await run(['x12', 'releases'])
     assert.equal(error, undefined)

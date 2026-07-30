@@ -81,9 +81,14 @@ Exit codes are meant for CI: 0 when the inspection ran and found nothing, 1 when
     // and reporting "obfuscated 400000 values" right before refusing to send
     // them reads like the scrub was the problem.
     assertInspectableSize(source)
+
+    // Authenticate before scrubbing, for the same reason the size check runs
+    // first: the scrub is the expensive, chatty step, and reporting "obfuscated
+    // 400 values before upload" immediately ahead of "you are not signed in"
+    // describes an upload that was never going to happen.
+    const client = await this.getAuthedClient()
     const payload = this.prepareUpload(source)
 
-    const client = await this.getAuthedClient()
     const report = await client.ediInspect(payload, {
       format,
       color: wantsColor(format, {noColorFlag: this.flags['no-color']}),

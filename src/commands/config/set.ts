@@ -1,7 +1,7 @@
 import {Args} from '@oclif/core'
 
 import {BaseCommand} from '../../base-command.js'
-import {assertConfigKey} from '../../lib/config-store.js'
+import {assertConfigKey, assertConfigValue} from '../../lib/config-store.js'
 
 export default class ConfigSet extends BaseCommand<typeof ConfigSet> {
   static description = 'Set a configuration value.'
@@ -16,6 +16,7 @@ export default class ConfigSet extends BaseCommand<typeof ConfigSet> {
   async run(): Promise<void> {
     const {key, value} = this.args
     assertConfigKey(key)
+    assertConfigValue(key, value)
     await this.configStore.set(key, value)
     this.log(`Set ${key} = ${value}`)
   }

@@ -5,7 +5,7 @@
 
 import {Command, Flags, Interfaces} from '@oclif/core'
 
-import {ConfigStore} from './lib/config-store.js'
+import {assertValidBaseUrl, ConfigStore} from './lib/config-store.js'
 import {API_KEY_ENV, createCredentialStore, CredentialStore} from './lib/credentials.js'
 import {ApiClient, createApiClient} from './lib/api-client.js'
 import {NotAuthenticatedError, TediError} from './lib/errors.js'
@@ -60,6 +60,10 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
 
   private async buildClient(token?: string): Promise<ApiClient> {
     const baseUrl = await this.configStore.get('api.baseUrl')
+    // Checked here, not just in `config set`: the value can also arrive from
+    // TEDI_API_BASE_URL or a hand-edited config.json, and an unusable one would
+    // otherwise escape as a bare `TypeError: Invalid URL` out of fetch.
+    assertValidBaseUrl(baseUrl)
     return createApiClient({baseUrl, token})
   }
 
