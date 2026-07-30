@@ -96,9 +96,6 @@ tedi x12 seg N1
 Use a throwaway config dir with `TEDI_CONFIG_DIR=/tmp/tedi-scratch tedi <cmd>` to
 avoid touching real state.
 
-Maintainers running the Tediware server locally (it lives in a separate, private
-repo) can point at it with `tedi config set api.baseUrl http://localhost:5004`.
-
 ## Releasing (maintainers)
 
 Releases are tag-driven:

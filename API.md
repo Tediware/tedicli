@@ -18,9 +18,8 @@ See `BRIEF.md` for product intent, command grammar, and the licensing posture.
 
 - Endpoints are under `<base>/api/x12` (reference) and `<base>/api/edi`
   (inspection), where `<base>` is the Tediware host. The CLI defaults to
-  production, `https://tediware.com`. Maintainers running the (private) Tediware
-  server locally point at `http://localhost:5004`; the host is configurable in
-  the CLI.
+  production, `https://tediware.com`, and the host is configurable
+  (`api.baseUrl` / `TEDI_API_BASE_URL`).
 - There is no version prefix in the path.
 - Reference requests are all `GET`. Inspection is a `POST` with a JSON body.
 

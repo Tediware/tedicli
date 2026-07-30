@@ -154,16 +154,20 @@ Exit codes are meant for CI: 0 when the inspection ran and found nothing, 1 when
    * paths report what happened on stderr — the scrub because the report's quoted
    * values will be replacements, the opt-out because "this run uploaded the file
    * unscrubbed" is worth having in a log.
+   *
+   * Each notice ends with a blank line so it reads as a preamble rather than as
+   * the report's first line, which is how it looks on a terminal, where stderr
+   * and stdout land together.
    */
   private prepareUpload(source: string): string {
     if (!this.flags.obfuscate) {
-      this.logToStderr('Uploading this interchange verbatim (--no-obfuscate).')
+      this.logToStderr('Uploading this interchange verbatim (--no-obfuscate).\n')
       return source
     }
 
     try {
       const result = obfuscateInterchange(source, {seed: this.flags.seed})
-      this.logToStderr(`${describeObfuscation(result)} before upload.`)
+      this.logToStderr(`${describeObfuscation(result)} before upload.\n`)
       return result.output
     } catch (err) {
       // The scrub needs a readable envelope, but a broken envelope is a common

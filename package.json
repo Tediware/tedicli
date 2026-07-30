@@ -1,7 +1,7 @@
 {
   "name": "@tediware/tedi",
   "version": "0.2.0",
-  "description": "Official command-line client for the Tediware platform. Thin client over the Tediware API; first capability is X12 reference lookup.",
+  "description": "Official command-line client for the Tediware platform. Thin client over the Tediware API: X12 reference lookup, plus scrubbing and inspecting your own EDI files.",
   "keywords": [
     "tediware",
     "tedi",
@@ -51,7 +51,7 @@
   "oclif": {
     "bin": "tedi",
     "dirname": "tedi",
-    "description": "ʕ·ᴥ·ʔ  Official command-line client for the Tediware platform https://tediware.com. First capability is X12 reference lookup.",
+    "description": "ʕ·ᴥ·ʔ  Official command-line client for the Tediware platform https://tediware.com. X12 reference lookup, plus scrubbing and inspecting your own EDI files.",
     "commands": "./dist/commands",
     "topicSeparator": " ",
     "plugins": [

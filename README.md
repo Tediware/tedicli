@@ -3,8 +3,10 @@
 The official command-line client for the [Tediware](https://tediware.com) platform.
 
 `tedi` is a thin client over the Tediware API — no proprietary logic and no
-licensed data live in the CLI. Its first capability is **X12 reference lookup**,
-and it is built to grow into a control-plane companion for the platform.
+licensed data live in the CLI. It covers **X12 reference lookup** and **your own
+EDI files**: scrubbing personal data out of an interchange on your machine, and
+inspecting one against the standard. It is built to grow into a control-plane
+companion for the platform.
 
 ## Install
 
@@ -43,9 +45,9 @@ tedi auth logout           # clear stored credentials
 
 `TEDI_API_KEY` overrides any stored key at request time. Stored credentials live
 in a permissioned file in the CLI config directory today; OS-keychain storage is a
-planned drop-in. X12 reference access additionally requires that your account has
-accepted the current Tediware service terms; the server enforces this on every
-request.
+planned drop-in. Reference lookup and inspection additionally require that your
+account has accepted the current Tediware service terms; the server enforces this
+on every request.
 
 > A browser device-flow login is the eventual destination but is deferred; it will
 > slot in under the same stored-key model without changing how you use the CLI.
@@ -178,6 +180,10 @@ case $? in
 esac
 ```
 
+The same split runs through the rest of the CLI: a lookup for a code that doesn't
+exist exits `1`, since that is a real answer, while anything that stopped a
+command from running — a mistyped flag, no key, an unreachable server — exits `2`.
+
 ## Configuration
 
 ```bash
@@ -236,10 +242,6 @@ export TEDI_API_MOCK=1
 export TEDI_API_KEY=sk-dev-anything
 tedi x12 releases
 ```
-
-> Maintainers running the Tediware server locally (it lives in a separate,
-> private repo) can point at it with
-> `tedi config set api.baseUrl http://localhost:5004`.
 
 > **Note:** the mock backend's reference content is synthetic placeholder data for
 > development only. It is not licensed X12 reference content.
