@@ -78,5 +78,14 @@ npm, the tag exists, and the GitHub Release was created.
 - **Pushed a bad tag** → the user can delete it locally and remotely
   (`git tag -d vX.Y.Z` and `git push origin :refs/tags/vX.Y.Z`), fix, and re-tag.
   Don't do the remote deletion yourself; guide the user.
+
+  **Re-tag with `git tag -a vX.Y.Z -m "vX.Y.Z"`, not `git tag vX.Y.Z`.** The plain
+  form makes a *lightweight* tag, which `git push --follow-tags` silently skips —
+  the push then moves `main` without the tag and no release run starts. `npm version`
+  creates annotated tags, so `-a` is also what keeps a re-tag consistent with a
+  normal release. Confirm with `git cat-file -t vX.Y.Z` (want `tag`, not `commit`).
+
+  If the failed version never reached npm, re-tagging the same version is fine;
+  if it *did* publish, npm forbids reusing the version — bump instead.
 - **The workflow fails at publish** → most often the one-time npm trusted-publisher
   setup is missing or this is the first-ever publish; see `/publish-setup`.

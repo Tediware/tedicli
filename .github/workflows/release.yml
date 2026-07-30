@@ -27,8 +27,11 @@ jobs:
             exit 1
           fi
 
-      # Trusted publishing (OIDC) requires npm >= 11.5.1.
-      - run: npm install -g npm@latest
+      # Trusted publishing (OIDC) requires npm >= 11.5.1. Pinned to a major line
+      # (like node-version above) rather than @latest: npm 12 landed mid-release
+      # and changed `npm pack --json`'s output shape, failing the preflight on a
+      # build that was fine. Bump this deliberately, not by surprise.
+      - run: npm install -g npm@12
 
       - run: npm ci
 
