@@ -12,8 +12,6 @@ CLI against, but it is versioned with the CLI, not published as a third-party
 API. Treat the CLI as the supported interface and this document as the
 integration contract behind it.
 
-See `BRIEF.md` for product intent, command grammar, and the licensing posture.
-
 ## Base
 
 - Endpoints are under `<base>/api/x12` (reference) and `<base>/api/edi`
@@ -26,7 +24,7 @@ See `BRIEF.md` for product intent, command grammar, and the licensing posture.
 ## Authentication
 
 - Header: `Authorization: Key <api_key>`.
-- The key is obtained out of band; see `BRIEF.md`. This document assumes the CLI
+- The key is obtained out of band. This document assumes the CLI
   already holds a key. The shipping mechanism for v0 is the pasted-key stopgap:
   the user creates a key in the dashboard, and `tedi auth login` prompts for it
   with no echo (never via a flag or argv). The browser device flow is the
@@ -210,7 +208,7 @@ reference command that is not release-scoped.
 
 Reference content is served as `console` or `markdown` text only. There is no
 JSON representation of segment, element, or transaction-set detail, by design
-(licensing posture, see `BRIEF.md`). JSON `index` and `show` actions exist under
+(licensing posture). JSON `index` and `show` actions exist under
 this namespace for the web app, but the CLI must not call them and must not offer
 `--json` for reference data. The only JSON the CLI consumes is `releases`.
 
@@ -436,7 +434,6 @@ jq -Rs '{edi_content: ., variant: "console", color: true}' claims.edi | \
   service-terms state, key label). Until then, validate a key by making a real
   request and reading the status code, not by calling `whoami`.
 - Any control-plane or data-plane endpoints (connections, partners, mappings,
-  flows, transmissions). The command grammar in `BRIEF.md` sketches these, but
-  they are not built.
+  flows, transmissions). These are not built.
 - The JSON `index`/`show`, `search`, and `favourites` actions under this
   namespace are web-app internals; the CLI does not use them.

@@ -15,7 +15,7 @@
  * The marker does NOT bypass the publisher/copyright check.
  *
  * This is a tripwire, not a proof of cleanliness. The real protections are the
- * EULA and the server-side rate limit; see BRIEF.md.
+ * EULA and the server-side rate limit.
  */
 
 import {execSync} from 'node:child_process'
@@ -42,7 +42,6 @@ const ALLOWLIST = new Set([
   'package-lock.json',
   'tsconfig.json',
   'README.md',
-  'BRIEF.md',
   'CONTRIBUTING.md',
   'NOTICE',
   'oclif.manifest.json',
@@ -109,7 +108,7 @@ for (const file of trackedFiles()) {
 
 if (failures.length > 0) {
   console.error('Licensed-data tripwire FAILED. The following tracked files look like they may contain')
-  console.error('licensed X12 reference data, which must never be committed (see BRIEF.md):\n')
+  console.error('licensed X12 reference data, which must never be committed:\n')
   for (const f of failures) console.error(`  - ${f}`)
   console.error('\nIf these are false positives, narrow the file or add the synthetic marker, then re-run.')
   process.exit(1)
