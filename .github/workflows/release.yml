@@ -12,7 +12,14 @@ jobs:
       contents: write # create the GitHub Release
       id-token: write # OIDC token for npm trusted publishing + provenance
     steps:
+      # Full history, not the default depth-1 checkout: scripts/release-notes.mjs
+      # builds the changelog from the commits between the previous tag and this
+      # one, and a shallow clone holds neither the previous tag nor those commits.
+      # It sees only the version-bump commit, discards it as noise, and aborts on
+      # an empty changelog.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
