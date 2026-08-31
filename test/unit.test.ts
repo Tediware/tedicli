@@ -8,7 +8,7 @@ import {useMock} from '../src/lib/api-client.js'
 import {ConfigStore, DEFAULT_X12_RELEASE, isConfigKey} from '../src/lib/config-store.js'
 import {FileCredentialStore} from '../src/lib/credentials.js'
 import {JsonNotSupportedError} from '../src/lib/errors.js'
-import {wantsColor} from '../src/lib/output.js'
+import {wantsColor, wantsFullCodeList} from '../src/lib/output.js'
 
 describe('wantsColor', () => {
   it('never requests color for markdown', () => {
@@ -32,6 +32,20 @@ describe('wantsColor', () => {
     process.env.NO_COLOR = '1'
     assert.equal(wantsColor('console', {isTty: true}), false)
     delete process.env.NO_COLOR
+  })
+})
+
+describe('wantsFullCodeList', () => {
+  it('asks for the whole list when console output is piped', () => {
+    assert.equal(wantsFullCodeList('console', {isTty: false}), true)
+  })
+
+  it('leaves the server default alone on a TTY, where the footer is actionable', () => {
+    assert.equal(wantsFullCodeList('console', {isTty: true}), false)
+  })
+
+  it('asks for nothing under markdown, which is already complete', () => {
+    assert.equal(wantsFullCodeList('markdown', {isTty: false}), false)
   })
 })
 

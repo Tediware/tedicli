@@ -7,11 +7,14 @@
 
 export type OutputFormat = 'console' | 'markdown'
 
-export interface ColorContext {
-  /** Value of the `--no-color` flag. */
-  noColorFlag?: boolean
+export interface TtyContext {
   /** Override the TTY check (used in tests). Defaults to `process.stdout.isTTY`. */
   isTty?: boolean
+}
+
+export interface ColorContext extends TtyContext {
+  /** Value of the `--no-color` flag. */
+  noColorFlag?: boolean
 }
 
 /**
@@ -32,4 +35,23 @@ export function wantsColor(format: OutputFormat, ctx: ColorContext = {}): boolea
   if (process.env.NO_COLOR !== undefined && process.env.NO_COLOR !== '') return false
   const isTty = ctx.isTty ?? Boolean(process.stdout.isTTY)
   return isTty
+}
+
+/**
+ * Decide whether to ask for the complete element code list when the user didn't
+ * say either way.
+ *
+ * The server truncates long code lists in the `console` variant and appends a
+ * footer telling the reader to run the lookup again for the rest. That footer is
+ * an interactive affordance: it asks a *person* to type a second command. When
+ * stdout is a pipe or a file there is nobody to act on it, so the truncation
+ * costs a round trip the caller cannot take — piped output gets the whole list
+ * for the same reason it gets no color.
+ *
+ * `markdown` is already complete, so there is nothing to ask for there.
+ */
+export function wantsFullCodeList(format: OutputFormat, ctx: TtyContext = {}): boolean {
+  if (format !== 'console') return false
+  const isTty = ctx.isTty ?? Boolean(process.stdout.isTTY)
+  return !isTty
 }

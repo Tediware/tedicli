@@ -14,7 +14,16 @@ process.env.TEDI_SKIP_NEW_VERSION_CHECK = '1'
 delete process.env.TEDI_API_KEY
 
 const root = process.cwd()
-const run = (args: string[]) => runCommand(args, {root}, {stripAnsi: true})
+const run = async (args: string[]) => {
+  const result = await runCommand(args, {root}, {stripAnsi: true})
+  // A parse failure (`--limit 0`, mutually exclusive flags) sets `process.exitCode`
+  // on the *test* process, which would fail this whole file even when the
+  // assertion on the captured error passes. The error object is the surface these
+  // tests read; the leaked code is noise. See edi-inspect.test.ts, which resets it
+  // for the opposite reason — there the exit code is the thing under test.
+  process.exitCode = 0
+  return result
+}
 
 async function makeConfigDir(withToken: boolean): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'tedi-cmd-'))
@@ -82,6 +91,40 @@ describe('commands (authenticated)', () => {
   it('x12 ele --format markdown renders markdown', async () => {
     const {stdout} = await run(['x12', 'ele', '235', '--format', 'markdown'])
     assert.match(stdout, /^# Element 235/m)
+  })
+
+  it('x12 ele asks for the whole code list when stdout is not a terminal', async () => {
+    // The test runner captures stdout, so this is the piped case: no truncation
+    // footer, because nobody is there to act on it.
+    const {stdout, error} = await run(['x12', 'ele', '235'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /EE  Example value E/)
+    assert.doesNotMatch(stdout, /showing/)
+  })
+
+  it('x12 ele --limit truncates even when piped', async () => {
+    const {stdout, error} = await run(['x12', 'ele', '235', '--limit', '2'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /BB  Example value B/)
+    assert.doesNotMatch(stdout, /CC  Example value C/)
+    assert.match(stdout, /showing 2/)
+  })
+
+  it('x12 ele --all shows every code', async () => {
+    const {stdout, error} = await run(['x12', 'ele', '235', '--all'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /EE  Example value E/)
+    assert.doesNotMatch(stdout, /showing/)
+  })
+
+  it('x12 ele rejects --all together with --limit', async () => {
+    const {error} = await run(['x12', 'ele', '235', '--all', '--limit', '2'])
+    assert.match(error?.message ?? '', /cannot also be provided|exclusive/i)
+  })
+
+  it('x12 ele rejects a limit below 1', async () => {
+    const {error} = await run(['x12', 'ele', '235', '--limit', '0'])
+    assert.match(error?.message ?? '', /greater than or equal to 1|must be/i)
   })
 
   it('x12 --json returns the educational error, not a flat failure', async () => {

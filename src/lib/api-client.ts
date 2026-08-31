@@ -37,11 +37,23 @@ import {
 } from './errors.js'
 import {fetchWithTimeout, FetchOptions} from './http.js'
 
+/**
+ * How many element codes to render: a positive count, or `'all'` for the whole
+ * list. Undefined leaves the choice to the server's own default (20 today).
+ */
+export type CodeLimit = number | 'all'
+
 export interface ReferenceRequest {
   release: string
   format: OutputFormat
   /** Whether to request server-side ANSI color (console format only). */
   color: boolean
+  /**
+   * Cap on the rendered element code list. Only the `console` variant truncates,
+   * so this does nothing for `markdown`, and the segment and transaction-set
+   * endpoints accept and ignore it.
+   */
+  codeLimit?: CodeLimit
 }
 
 /** A server-rendered reference document. `body` is ready to print as-is. */
@@ -147,6 +159,23 @@ const MOCK_RELEASES: ReleaseInfo[] = [
   {code: '004010', name: 'Release 004010', hipaa: false},
 ]
 
+/** Synthetic code list, long enough that the mock can actually truncate it. */
+const MOCK_ELEMENT_CODES: ReadonlyArray<readonly [string, string]> = [
+  ['AA', 'Example value A'],
+  ['BB', 'Example value B'],
+  ['CC', 'Example value C'],
+  ['DD', 'Example value D'],
+  ['EE', 'Example value E'],
+]
+
+/** The mock's stand-in for the server's default console truncation. */
+const MOCK_DEFAULT_CODE_PREVIEW = 3
+
+function mockCodeCap(limit: CodeLimit | undefined, total: number): number {
+  if (limit === 'all') return total
+  return limit ?? MOCK_DEFAULT_CODE_PREVIEW
+}
+
 /**
  * Development-only mock. All content here is synthetic and exists purely to make
  * the CLI runnable; it is not real licensed X12 reference data.
@@ -182,14 +211,22 @@ export class MockApiClient implements ApiClient {
 
   async x12Element(id: string, req: ReferenceRequest): Promise<RenderedReference> {
     this.requireToken()
+    // Imitate the server's truncation so the `--limit`/`--all` plumbing is
+    // exercisable against the mock; the codes themselves remain synthetic.
+    const codes = MOCK_ELEMENT_CODES
+    const cap = req.format === 'markdown' ? codes.length : mockCodeCap(req.codeLimit, codes.length)
+    const shown = codes.slice(0, cap)
+    const footer =
+      shown.length < codes.length
+        ? ['', `(${codes.length} codes; showing ${shown.length}. Use --all for the full list.)`]
+        : []
     return this.render('Element', id, req, [
       'Name: (synthetic) Example Element',
       'Type: ID   Min/Max: 1/3',
       '',
-      'Codes (synthetic; showing 3):',
-      '  AA  Example value A',
-      '  BB  Example value B',
-      '  CC  Example value C',
+      `Codes (synthetic; ${shown.length} of ${codes.length}):`,
+      ...shown.map(([code, name]) => `  ${code}  ${name}`),
+      ...footer,
     ])
   }
 
@@ -272,6 +309,11 @@ export interface ServerFault {
   status: number
 }
 
+/** The server's message as a trailing clause, or nothing when it sent none. */
+function detailOf(fault: ServerFault): string {
+  return fault.message ? `: ${fault.message}` : ''
+}
+
 /** Per-request hooks that let one status mapper word errors for each endpoint. */
 interface ErrorContext {
   /** Lookup being performed, used to word a contextual 404. */
@@ -338,7 +380,7 @@ function readFindings(headers: Headers): InspectionFindings | undefined {
  * on the server, so neither may fail a build the way findings do.
  */
 function inspectionRefusal(fault: ServerFault): TediError {
-  const detail = fault.message ? `: ${fault.message}` : ''
+  const detail = detailOf(fault)
   switch (fault.code) {
     case 'unparseable_document':
       return new UnreadableDocumentError(fault.message)
@@ -474,14 +516,27 @@ export class HttpApiClient implements ApiClient {
     switch (res.status) {
       case 400:
       case 413:
-      case 422:
+      case 422: {
         // Request-shaped failures. Only `inspect` can legitimately produce one,
         // since its payload is the user's file; it reads the `code` to work out
-        // whose fault the refusal is. For reference lookups the CLI controls
-        // every parameter, so these are bugs: fall through to the generic error,
-        // which keeps the status visible.
-        if (ctx.rejected) throw ctx.rejected(await this.readFault(res))
-        break
+        // whose fault the refusal is. For reference lookups the CLI builds every
+        // parameter and validates `--limit` before sending, so one of these is a
+        // bug — but `invalid_limit` is at least traceable to something the user
+        // typed, so name it instead of printing a bare status.
+        const fault = await this.readFault(res)
+        if (ctx.rejected) throw ctx.rejected(fault)
+        if (ctx.reference && fault.code === 'invalid_limit') {
+          throw new TediError(`The Tediware API rejected the code-list limit this build sent${detailOf(fault)}.`, {
+            suggestions: [
+              // `--limit` is already checked for a whole number >= 1, so reaching
+              // here means the server's idea of a valid limit is not this build's.
+              'Try `--all` for the complete list, or a smaller `--limit`.',
+              'This build and the server disagree about what limits are allowed — run `tedi update`.',
+            ],
+          })
+        }
+        throw new TediError(`Tediware API request failed (${res.status} ${res.statusText})${detailOf(fault)}.`)
+      }
       case 401:
         // A 401 with a key in hand means the server rejected that key (wrong key,
         // or a base URL pointed at a server that doesn't recognize it) — which is
@@ -528,6 +583,9 @@ export class HttpApiClient implements ApiClient {
     // the inspect endpoint). `color` is only meaningful for the console variant.
     url.searchParams.set('variant', req.format)
     if (req.color) url.searchParams.set('color', 'true')
+    // Omitted entirely when the caller has no opinion, so the server keeps its
+    // own default rather than this build pinning one that may later move.
+    if (req.codeLimit !== undefined) url.searchParams.set('limit', String(req.codeLimit))
 
     const res = await this.send(url, {headers: this.authHeaders()})
     if (!res.ok) await this.throwForStatus(res, {reference: {kind, code, release: req.release}})

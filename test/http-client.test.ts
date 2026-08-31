@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {afterEach, describe, it} from 'node:test'
 
-import {HttpApiClient, MAX_INSPECT_BYTES} from '../src/lib/api-client.js'
+import {CodeLimit, HttpApiClient, MAX_INSPECT_BYTES} from '../src/lib/api-client.js'
 import {
   AccountUnavailableError,
   EdiTooLargeError,
@@ -51,7 +51,7 @@ function stubFetch(handler: (req: Captured) => {status?: number; body?: string; 
 }
 
 const client = (token?: string) => new HttpApiClient({baseUrl: 'http://localhost:5004', token})
-const req = (over: Partial<{release: string; format: OutputFormat; color: boolean}> = {}) => ({
+const req = (over: Partial<{release: string; format: OutputFormat; color: boolean; codeLimit: CodeLimit}> = {}) => ({
   release: '004010',
   format: 'console' as OutputFormat,
   color: false,
@@ -119,6 +119,26 @@ describe('HttpApiClient', () => {
       await c.x12Transaction('856', req())
       assert.match(calls[0].url, /\/api\/x12\/004010\/elements\/235\/download\?variant=markdown$/)
       assert.match(calls[1].url, /\/api\/x12\/004010\/transaction_sets\/856\/download\?variant=console$/)
+    })
+
+    it('omits limit entirely when the caller has no opinion', async () => {
+      const {calls} = stubFetch(() => ({body: 'x'}))
+      await client('sk-test').x12Element('673', req())
+      // The server owns the default; pinning one here would freeze a number that
+      // is the renderer's to change.
+      assert.doesNotMatch(calls[0].url, /[?&]limit=/)
+    })
+
+    it('sends a numeric code limit', async () => {
+      const {calls} = stubFetch(() => ({body: 'x'}))
+      await client('sk-test').x12Element('673', req({codeLimit: 5}))
+      assert.match(calls[0].url, /[?&]limit=5(&|$)/)
+    })
+
+    it('sends limit=all for the complete code list', async () => {
+      const {calls} = stubFetch(() => ({body: 'x'}))
+      await client('sk-test').x12Element('673', req({codeLimit: 'all'}))
+      assert.match(calls[0].url, /[?&]limit=all(&|$)/)
     })
 
     it('honors the requested release in the path', async () => {
@@ -506,6 +526,20 @@ describe('HttpApiClient', () => {
   })
 
   describe('reference lookups do not borrow the inspect error mapping', () => {
+    it('names a rejected code limit rather than leaving a bare status', async () => {
+      // The user typed this one (via --limit), so it is worth wording, unlike the
+      // parameters the CLI builds on its own.
+      stubFetch(() => ({status: 400, body: JSON.stringify({error: 'limit must be a positive integer or "all".', code: 'invalid_limit'})}))
+      await assert.rejects(client('sk-test').x12Element('673', req({codeLimit: 5})), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /code-list limit/)
+        assert.match(err.message, /positive integer/)
+        assert.ok(err.suggestions?.some((s) => s.includes('--all')))
+        assert.ok(err.suggestions?.some((s) => s.includes('tedi update')))
+        return true
+      })
+    })
+
     it('treats a 400 as an unexpected failure, keeping the status visible', async () => {
       // The CLI controls every reference parameter, so a 400 there is a bug, not
       // something the user can fix — it must not render as an inspection failure.

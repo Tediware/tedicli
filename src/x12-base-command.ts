@@ -8,7 +8,7 @@
 import {Command, Flags, Interfaces} from '@oclif/core'
 
 import {BaseCommand} from './base-command.js'
-import {ReferenceRequest, RenderedReference} from './lib/api-client.js'
+import {CodeLimit, ReferenceRequest, RenderedReference} from './lib/api-client.js'
 import {JsonNotSupportedError} from './lib/errors.js'
 import {wantsColor} from './lib/output.js'
 
@@ -41,8 +41,13 @@ export abstract class X12Command<T extends typeof Command> extends BaseCommand<T
     return this.configStore.get('x12.release')
   }
 
-  /** Build a ReferenceRequest, rejecting `--json` and computing color intent. */
-  protected async referenceRequest(): Promise<ReferenceRequest> {
+  /**
+   * Build a ReferenceRequest, rejecting `--json` and computing color intent.
+   *
+   * `codeLimit` is only meaningful for element lookups, so the command that has
+   * the flags passes it in rather than every reference command carrying them.
+   */
+  protected async referenceRequest(opts: {codeLimit?: CodeLimit} = {}): Promise<ReferenceRequest> {
     if (this.flags.json) throw new JsonNotSupportedError()
     const format = this.flags.format
     const release = await this.resolveRelease()
@@ -50,6 +55,7 @@ export abstract class X12Command<T extends typeof Command> extends BaseCommand<T
       release,
       format,
       color: wantsColor(format, {noColorFlag: this.flags['no-color']}),
+      codeLimit: opts.codeLimit,
     }
   }
 

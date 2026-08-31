@@ -74,6 +74,23 @@ Colored `console` output is requested only when stdout is an interactive termina
 and color hasn't been disabled (`--no-color` / `NO_COLOR`). `markdown` is never
 colored, so piped and redirected output stays clean.
 
+`tedi x12 ele` additionally accepts:
+
+- `--all` — show every code, instead of the truncated console preview.
+- `--limit <n>` — show at most `n` codes. Console format only; `markdown` always
+  shows every code.
+
+```bash
+tedi x12 ele 673 --all        # the whole code list, not the first 20
+tedi x12 ele 673 --limit 50   # a longer preview
+tedi x12 ele 673 | grep '^  P'  # already complete: piped output is never truncated
+```
+
+Truncation is an interactive affordance — the footer asks you to run a second
+lookup — so it applies only when stdout is a terminal. Piped or redirected output
+gets the complete list by default, for the same reason it gets no color. Pass
+`--limit` if you want the short list on the other end of a pipe anyway.
+
 ## EDI files
 
 Commands for your own EDI files. Locality is a per-command property, stated in

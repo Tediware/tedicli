@@ -99,6 +99,14 @@ Query parameters:
 - `color=true` colors the `console` variant only. Send it only when stdout is an
   interactive terminal and `NO_COLOR` is unset and `--no-color` was not passed.
   See "Color" below.
+- `limit=<n>|all` caps the rendered element code list. Omit it and the server
+  keeps its own default (20 today) — the CLI omits it rather than pinning a
+  number the renderer is free to change. `limit=all` renders every code and drops
+  the truncation footer, as does any `n` at or above the code count. Only
+  `elements` acts on it; `segments` and `transaction_sets` accept and ignore it,
+  so a client may send it uniformly. `markdown` ignores it too, being complete
+  already. Anything else (`0`, `-1`, `twenty`) is a `400` with code
+  `invalid_limit`; auth runs first, so a bad limit without a key is still `401`.
 
 Response `200`: the rendered reference text in the request body.
 
@@ -112,7 +120,9 @@ download menu). The CLI ignores it and reads the response body directly.
 
 The rendered output echoes the release it used (a `Release: <code>` line). Long
 element code lists are truncated in the `console` variant with a footer pointing
-at the markdown format for the full list; `markdown` returns every code.
+at the markdown format for the full list; `markdown` returns every code. `limit`
+(above) overrides the truncation — see "Element code lists" below for how the CLI
+decides what to send.
 
 Backs:
 
@@ -237,6 +247,9 @@ the contract. Never branch on the body *shape*.
 | 200    | Success                          | rendered text (or JSON for /releases)       |
 | 400    | Unrecognized variant             | { "error": "Unknown variant '...'. ...",    |
 |        |                                  |   "code": "invalid_variant" }               |
+| 400    | Code limit not a positive        | { "error": "...", "code":                   |
+|        | integer or "all"                 |   "invalid_limit" } + Cache-Control:        |
+|        |                                  |   no-store                                  |
 | 401    | Missing or invalid key           | { "error": "Not authenticated" }            |
 |        |                                  | or { "error": "Invalid API key" }           |
 | 403    | Key's organization is disabled   | { "error": "Account unavailable" }          |
@@ -256,7 +269,10 @@ Suggested CLI handling:
 403 (disabled)  -> account unavailable; contact support
 404  -> "No <segment|element|transaction> '<code>' in release <release>."
         Suggest `tedi x12 releases` or checking the code.
-400  -> should not occur (the CLI controls the variant); treat as a bug
+400 (invalid_variant) -> should not occur (the CLI controls the variant); a bug
+400 (invalid_limit)   -> the CLI validates --limit before sending, so this means
+        this build and the server disagree about what is allowed; say so and
+        suggest `tedi update` rather than printing a bare status
 429  -> honor the Retry-After header (seconds) and print a friendly wait message
 ```
 
@@ -412,6 +428,10 @@ curl -H "Authorization: Key $TEDI_API_KEY" \
 curl -H "Authorization: Key $TEDI_API_KEY" \
   "$BASE/api/x12/004010/segments/N1/download?variant=console&color=true"
 
+# Element 673 in 004010, console, every code
+curl -H "Authorization: Key $TEDI_API_KEY" \
+  "$BASE/api/x12/004010/elements/673/download?variant=console&limit=all"
+
 # Element 235 in 004010, markdown
 curl -H "Authorization: Key $TEDI_API_KEY" \
   "$BASE/api/x12/004010/elements/235/download?variant=markdown"
@@ -425,6 +445,59 @@ jq -Rs '{edi_content: ., variant: "console", color: true}' claims.edi | \
   curl -H "Authorization: Key $TEDI_API_KEY" -H "Content-Type: application/json" \
     --data-binary @- "$BASE/api/edi/inspect"
 ```
+
+## Element code lists
+
+The `console` variant truncates long element code lists; `limit` (see the
+reference endpoint's query parameters) controls that. What the CLI sends:
+
+| Invocation                       | `limit` sent |
+| -------------------------------- | ------------ |
+| `tedi x12 ele 673` at a terminal  | *(omitted)* — the server's default |
+| `tedi x12 ele 673` piped or redirected | `all` |
+| `tedi x12 ele 673 --all`          | `all` |
+| `tedi x12 ele 673 --limit 50`     | `50` |
+| `--format markdown`, any of the above | as given; the server ignores it |
+
+The piped default is the part worth explaining. A truncated list ends in a footer
+inviting a second lookup — an affordance aimed at a person at a prompt. A pipe, a
+file, or a script cannot act on it, so truncation there spends a round trip the
+caller can never make. Piped output gets the whole list for the same reason it
+gets no color. `--limit` still wins if a caller genuinely wants the short list on
+the other end of a pipe.
+
+The CLI validates the limit itself (a whole number ≥ 1, or `--all`), so an
+`invalid_limit` response means this build and the server disagree about what is
+allowed; it is worded as such rather than as a bare status.
+
+### Why there is no relevance ordering
+
+The companion idea — put the useful codes first, so a truncated window is worth
+reading — was **dropped: no relevance signal exists.** Recorded so it isn't
+re-proposed:
+
+- **The existing order is stable, which is worth something.** Codes come back in
+  dictionary import order (`order(:id)`), deliberately, so the console slice is
+  always a prefix of the markdown list. For 673 that is `00, 01, 02, 03…`. It is
+  arbitrary with respect to relevance, but it is the dictionary's own opening and
+  it does not shift underfoot. (An earlier version of this note called the order
+  alphanumeric. It isn't.)
+- **Per-transaction-set code subsets do not exist in the reference data.** Asked
+  and answered: code lists hang off the element and are release-scoped only. A
+  transaction set reaches an element through `segment_uses → element_uses`, which
+  carries requirement and position, never a code subset. So `tedi x12 ele 673 --in
+  837` is not answerable from licensed reference data, and should not be faked.
+  The subsets do exist one layer up, as `implementation_element_uses.allowed_codes`
+  on partner implementations — but that is org-private customer data on a
+  different auth plane, so it could only ever back a command scoped to the
+  caller's own implementation, never a public `tedi x12` lookup.
+- **There is no deprecation or status flag per code** to order on either; the
+  dictionary import has nothing to populate one from.
+- **Usage frequency from `POST /api/edi/inspect` traffic** is the only empirical
+  signal in the system, and the scrub preserves code values, so it survives
+  obfuscation. Mining customer interchanges for aggregate statistics is a data-use
+  and consent decision, not a ranking feature. Do not build it as a side effect of
+  a formatting fix.
 
 ## Not available yet (do not build against)
 
