@@ -83,7 +83,7 @@ colored, so piped and redirected output stays clean.
 ```bash
 tedi x12 ele 673 --all        # the whole code list, not the first 20
 tedi x12 ele 673 --limit 50   # a longer preview
-tedi x12 ele 673 | grep '^  P'  # already complete: piped output is never truncated
+tedi x12 ele 673 | grep -i rejected   # piped output is complete, so this searches all 832 codes
 ```
 
 Truncation is an interactive affordance — the footer asks you to run a second

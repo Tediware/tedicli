@@ -309,9 +309,15 @@ export interface ServerFault {
   status: number
 }
 
-/** The server's message as a trailing clause, or nothing when it sent none. */
+/**
+ * The server's message as a trailing clause, or nothing when it sent none.
+ *
+ * Every caller closes the sentence with its own period, and the server's
+ * messages are themselves sentences ("Invalid limit '0'. Use a positive integer
+ * or 'all'."), so the two meet as `...or 'all'..`. Drop the borrowed one.
+ */
 function detailOf(fault: ServerFault): string {
-  return fault.message ? `: ${fault.message}` : ''
+  return fault.message ? `: ${fault.message.replace(/\s*\.\s*$/, '')}` : ''
 }
 
 /** Per-request hooks that let one status mapper word errors for each endpoint. */
