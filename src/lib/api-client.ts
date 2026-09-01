@@ -10,10 +10,9 @@
  *                         runnable before the server endpoints exist. The mock data
  *                         here is invented for development and is NOT licensed X12
  *                         reference content.
- *   - `HttpApiClient`   — real HTTP client implementing the contract in `API.md`.
- *                         Reference and releases calls hit the platform; the
- *                         identity endpoint doesn't exist server-side yet and
- *                         throws a clear "not available yet" error.
+ *   - `HttpApiClient`   — real HTTP client implementing the contract in `API.md`,
+ *                         covering the X12 reference reads, EDI inspection, and
+ *                         the platform data plane (`/platform/...`).
  *
  * `createApiClient` selects between them. The real HTTP client is the default so
  * a published CLI talks to the actual platform; set `TEDI_API_MOCK=1` to opt into
@@ -23,7 +22,9 @@
 import {OutputFormat} from './output.js'
 import {
   AccountUnavailableError,
+  DataNotFoundError,
   EdiTooLargeError,
+  EXIT_DEFECT,
   IdentityUnavailableError,
   InspectionUnavailableError,
   InvalidApiKeyError,
@@ -36,6 +37,22 @@ import {
   UnsupportedReleaseError,
 } from './errors.js'
 import {fetchWithTimeout, FetchOptions} from './http.js'
+import {
+  applyQuery,
+  ArtifactContent,
+  FeedEntry,
+  FeedQuery,
+  LogLine,
+  LogQuery,
+  Page,
+  PartnerReceiveReceipt,
+  PartnerSendReceipt,
+  PlatformResult,
+  ResultListQuery,
+  TransactionDetail,
+  TransactionListQuery,
+  TransactionSummary,
+} from './platform.js'
 
 /**
  * How many element codes to render: a positive count, or `'all'` for the whole
@@ -112,10 +129,16 @@ export interface ReleaseInfo {
   hipaa: boolean
 }
 
+/** The principal behind the key, from `GET /platform/whoami`. */
 export interface Identity {
   organization: string
+  organizationId: string
   keyScope: string
-  /** Last 4 characters of the API key, for display. */
+  /** The key's label as named in the dashboard, or null for an unnamed key. */
+  keyLabel: string | null
+  /** Whether the key's creator has accepted the current service terms. */
+  termsAccepted: boolean
+  /** Last 4 characters of the API key, for display. Derived locally. */
   keyHint: string
 }
 
@@ -127,6 +150,16 @@ export interface ApiClient {
   x12Releases(): Promise<ReleaseInfo[]>
   ediInspect(content: string, req: InspectionRequest): Promise<InspectedEdi>
   whoami(): Promise<Identity>
+  transactionList(query: TransactionListQuery): Promise<Page<TransactionSummary>>
+  transactionGet(id: string): Promise<TransactionDetail>
+  transactionResend(id: string): Promise<{ediTransactionId: string}>
+  resultList(query: ResultListQuery): Promise<Page<PlatformResult>>
+  resultGet(id: string): Promise<PlatformResult>
+  logList(query: LogQuery): Promise<Page<LogLine>>
+  feedList(query: FeedQuery): Promise<Page<FeedEntry>>
+  artifactGet(id: string): Promise<ArtifactContent>
+  partnerSend(key: string, code: string, contents: unknown, filename?: string): Promise<PartnerSendReceipt>
+  partnerReceive(key: string, contents: string, filename?: string): Promise<PartnerReceiveReceipt>
 }
 
 export interface ApiClientOptions {
@@ -281,9 +314,196 @@ export class MockApiClient implements ApiClient {
 
   async whoami(): Promise<Identity> {
     this.requireToken()
-    return {organization: 'Acme EDI (dev)', keyScope: 'reference:read', keyHint: this.opts.token!.slice(-4)}
+    return {
+      organization: 'Acme EDI (dev)',
+      organizationId: 'mock-org-0000',
+      keyScope: 'standard',
+      keyLabel: 'Development key',
+      termsAccepted: true,
+      keyHint: this.opts.token!.slice(-4),
+    }
+  }
+
+  async transactionList(query: TransactionListQuery): Promise<Page<TransactionSummary>> {
+    this.requireToken()
+    let rows = MOCK_TRANSACTIONS
+    if (query.incoming !== undefined) rows = rows.filter((t) => t.incoming === query.incoming)
+    if (query.transactionSetIdentifier) {
+      rows = rows.filter((t) => t.transactionSetIdentifier === query.transactionSetIdentifier)
+    }
+
+    if (query.trace) rows = rows.filter((t) => t.traceGuid === query.trace)
+    return {items: rows.slice(0, query.limit ?? 50), hasMore: false, nextCursor: null}
+  }
+
+  async transactionGet(id: string): Promise<TransactionDetail> {
+    this.requireToken()
+    const row = MOCK_TRANSACTIONS.find((t) => t.id === id)
+    if (!row) throw new DataNotFoundError('transaction', id)
+    return {...row, status: 'delivered', flowName: 'Mock Inbound Flow', results: MOCK_RESULTS}
+  }
+
+  async transactionResend(id: string): Promise<{ediTransactionId: string}> {
+    this.requireToken()
+    if (!MOCK_TRANSACTIONS.some((t) => t.id === id)) throw new DataNotFoundError('transaction', id)
+    return {ediTransactionId: id}
+  }
+
+  async resultList(query: ResultListQuery): Promise<Page<PlatformResult>> {
+    this.requireToken()
+    let rows = MOCK_RESULTS
+    if (query.trace) rows = rows.filter((r) => r.traceGuid === query.trace)
+    return {items: rows.slice(0, query.limit ?? 50), hasMore: false, nextCursor: null}
+  }
+
+  async resultGet(id: string): Promise<PlatformResult> {
+    this.requireToken()
+    const row = MOCK_RESULTS.find((r) => r.id === id)
+    if (!row) throw new DataNotFoundError('result', id)
+    return row
+  }
+
+  async logList(query: LogQuery): Promise<Page<LogLine>> {
+    this.requireToken()
+    let rows = MOCK_LOGS.filter((l) => l.traceGuid === query.trace)
+    if (query.level) rows = rows.filter((l) => l.level === query.level)
+    return {items: rows.slice(0, query.limit ?? 50), hasMore: false, nextCursor: null}
+  }
+
+  async feedList(query: FeedQuery): Promise<Page<FeedEntry>> {
+    this.requireToken()
+    let rows = MOCK_FEED
+    if (query.direction) rows = rows.filter((f) => f.direction === query.direction)
+    if (query.status) rows = rows.filter((f) => f.status === query.status)
+    // An empty page echoes the cursor, matching the server's tail contract.
+    if (query.cursor) return {items: [], hasMore: false, nextCursor: query.cursor}
+    return {items: rows.slice(0, query.limit ?? 50), hasMore: false, nextCursor: 'mock-cursor-1'}
+  }
+
+  async artifactGet(id: string): Promise<ArtifactContent> {
+    this.requireToken()
+    if (!MOCK_RESULTS.some((r) => r.detail.artifacts?.some((a) => a.id === id))) {
+      throw new DataNotFoundError('artifact', id)
+    }
+
+    return {
+      bytes: new TextEncoder().encode('ISA*00*(synthetic development artifact — not real EDI)~'),
+      contentType: 'application/edi-x12',
+      filename: 'mock.edi',
+    }
+  }
+
+  async partnerSend(): Promise<PartnerSendReceipt> {
+    this.requireToken()
+    return {
+      interchangeControlNumber: '000000001',
+      groupControlNumber: '000000001',
+      traceGuid: 'mock-trace-outbound',
+    }
+  }
+
+  async partnerReceive(): Promise<PartnerReceiveReceipt> {
+    this.requireToken()
+    return {traceGuid: 'mock-trace-inbound'}
   }
 }
+
+// Synthetic development data for the platform surface: fixed ids so tests and
+// manual exploration can address records without a discovery step.
+const MOCK_TRACE = 'aaaaaaaa-0000-0000-0000-000000000001'
+
+const MOCK_TRANSACTIONS: TransactionSummary[] = [
+  {
+    id: 'mock-txn-1',
+    senderExtid: 'SENDERID',
+    senderQualifier: 'ZZ',
+    receiverExtid: 'RECEIVERID',
+    receiverQualifier: 'ZZ',
+    interchangeControlNumber: '000000001',
+    groupControlNumber: '000000001',
+    transactionSetControlNumber: '0001',
+    transactionSetIdentifier: '850',
+    traceGuid: MOCK_TRACE,
+    incoming: true,
+    acknowledgmentStatus: undefined,
+    resendCount: 0,
+    lastResentAt: null,
+    createdAt: '2026-01-01T12:00:00Z',
+    updatedAt: '2026-01-01T12:00:00Z',
+  },
+  {
+    id: 'mock-txn-2',
+    senderExtid: 'RECEIVERID',
+    senderQualifier: 'ZZ',
+    receiverExtid: 'SENDERID',
+    receiverQualifier: 'ZZ',
+    interchangeControlNumber: '000000002',
+    groupControlNumber: '000000002',
+    transactionSetControlNumber: '0001',
+    transactionSetIdentifier: '856',
+    traceGuid: 'aaaaaaaa-0000-0000-0000-000000000002',
+    incoming: false,
+    acknowledgmentStatus: 'accepted',
+    resendCount: 0,
+    lastResentAt: null,
+    createdAt: '2026-01-02T12:00:00Z',
+    updatedAt: '2026-01-02T12:00:00Z',
+  },
+]
+
+const MOCK_RESULTS: PlatformResult[] = [
+  {
+    id: 'mock-result-1',
+    traceGuid: MOCK_TRACE,
+    nodeName: 'EDI Endpoint',
+    createdAt: '2026-01-01T12:00:00Z',
+    updatedAt: '2026-01-01T12:00:01Z',
+    detail: {
+      direction: 'inbound',
+      artifacts: [
+        {id: 'mock-artifact-1', usage: 'edi', contentType: 'application/edi-x12', filename: 'in.edi'},
+      ],
+      transformations: ['EDI Endpoint', 'EDI to JSON'],
+    },
+  },
+]
+
+const MOCK_LOGS: LogLine[] = [
+  {
+    id: 'mock-log-1',
+    level: 'info',
+    message: '(synthetic) Received document',
+    nodeName: 'EDI Endpoint',
+    traceGuid: MOCK_TRACE,
+    createdAt: '2026-01-01T12:00:00Z',
+  },
+  {
+    id: 'mock-log-2',
+    level: 'info',
+    message: '(synthetic) Delivered to webhook',
+    nodeName: 'Webhook',
+    traceGuid: MOCK_TRACE,
+    createdAt: '2026-01-01T12:00:01Z',
+  },
+]
+
+const MOCK_FEED: FeedEntry[] = [
+  {
+    id: 'mock-feed-1',
+    direction: 'inbound',
+    status: 'success',
+    partnerKey: 'ACME',
+    traceGuid: MOCK_TRACE,
+    resultId: 'mock-result-1',
+    createdAt: '2026-01-01T12:00:01Z',
+    detail: {
+      direction: 'inbound',
+      artifacts: [
+        {id: 'mock-artifact-1', usage: 'edi', contentType: 'application/edi-x12', filename: 'in.edi'},
+      ],
+    },
+  },
+]
 
 // ---------------------------------------------------------------------------
 // HTTP implementation (skeleton)
@@ -328,6 +548,13 @@ interface ErrorContext {
   rejected?: (fault: ServerFault) => TediError
   /** Builds the 404 for endpoints where a miss means the route itself is absent. */
   missing?: () => TediError
+  /**
+   * Data-plane lookup by id. A 404 here is ambiguous: a genuine miss carries
+   * `code: "not_found"` in the body, while a server too old to have the route
+   * answers a code-less routing 404 — and only the first is a verdict the CLI
+   * may assert (exit 1). The second must not tell CI the record does not exist.
+   */
+  notFound?: {kind: string; id: string}
 }
 
 /**
@@ -435,9 +662,10 @@ interface RawRelease {
  *   - the release is part of the path, and the output format is the `variant` query;
  *   - errors are mapped from the HTTP status (see the error table in API.md).
  *
- * The identity (`whoami`) endpoint does not exist yet, so that method throws a
- * clear "not available yet" error (see API.md "Not available yet"). Keys are
- * obtained out of band and provided via `tedi auth login` or `TEDI_API_KEY`.
+ * Data-plane endpoints live under `<base>/platform` on the same credential and
+ * answer camelCase JSON with the nested `{error: {message, code, reason?}}`
+ * refusal body, which `readFault` already reads. Keys are obtained out of band
+ * and provided via `tedi auth login` or `TEDI_API_KEY`.
  */
 export class HttpApiClient implements ApiClient {
   readonly isMock = false
@@ -552,13 +780,26 @@ export class HttpApiClient implements ApiClient {
         throw new NotAuthenticatedError()
       case 403: {
         const msg = await this.readErrorMessage(res)
-        // Two distinct 403s: unaccepted service terms vs. a disabled organization.
+        // Unaccepted service terms and a disabled organization each get their
+        // typed error; any other refusal (e.g. a sandbox key on an org-wide
+        // data-plane endpoint) is worded by the server, so print that.
         if (/terms/i.test(msg)) throw new TermsNotAcceptedError()
-        throw new AccountUnavailableError()
+        if (!msg || /unavailable/i.test(msg)) throw new AccountUnavailableError()
+        throw new TediError(msg)
       }
       case 404: {
-        const {missing, reference} = ctx
+        const {missing, notFound, reference} = ctx
         if (reference) throw new NotFoundError(reference.kind, reference.code, reference.release)
+        if (notFound) {
+          const fault = await this.readFault(res)
+          if (fault.code === 'not_found') throw new DataNotFoundError(notFound.kind, notFound.id)
+          throw new TediError(`The server at ${this.base} has no ${notFound.kind} endpoint (HTTP 404).`, {
+            suggestions: [
+              'Check that api.baseUrl points at a current Tediware server (`tedi config get api.baseUrl`).',
+            ],
+          })
+        }
+
         // Nothing was looked up by id, so a 404 means the route is not there —
         // "Record not found" would be answering a question nobody asked.
         if (missing) throw missing()
@@ -669,11 +910,192 @@ export class HttpApiClient implements ApiClient {
     return {format: req.format, body: await res.text(), findings: readFindings(res.headers)}
   }
 
+  /**
+   * `GET /platform/whoami` — validates the key and reports its principal
+   * without spending reference quota or touching org data. A 404 means the
+   * server predates the endpoint; the typed error lets whoami/auth-status
+   * degrade to the locally-known key instead of failing.
+   */
   async whoami(): Promise<Identity> {
-    // The identity endpoint doesn't exist server-side yet (API.md). Throw a typed
-    // error so the whoami/auth-status commands can degrade gracefully.
-    throw new IdentityUnavailableError()
+    const raw = await this.platformJson<{
+      organization?: {id?: string; name?: string}
+      keyScope?: string
+      keyLabel?: string | null
+      serviceTermsAccepted?: boolean
+    }>('/platform/whoami', {missing: () => new IdentityUnavailableError()})
+    return {
+      organization: raw.organization?.name ?? '(unknown organization)',
+      organizationId: raw.organization?.id ?? '',
+      keyScope: raw.keyScope ?? 'standard',
+      keyLabel: raw.keyLabel ?? null,
+      termsAccepted: Boolean(raw.serviceTermsAccepted),
+      keyHint: (this.opts.token ?? '').slice(-4),
+    }
   }
+
+  async transactionList(query: TransactionListQuery): Promise<Page<TransactionSummary>> {
+    const url = new URL(`${this.base}/platform/edi_transactions`)
+    applyQuery(url, {
+      incoming: query.incoming,
+      transaction_set_identifier: query.transactionSetIdentifier,
+      trace: query.trace,
+      ack_status: query.ackStatus,
+      limit: query.limit,
+      cursor: query.cursor,
+    })
+    const raw = await this.platformJson<{ediTransactions?: TransactionSummary[]} & RawPagination>(url)
+    return pageOf(raw.ediTransactions, raw)
+  }
+
+  async transactionGet(id: string): Promise<TransactionDetail> {
+    return this.platformJson<TransactionDetail>(`/platform/edi_transactions/${encodeURIComponent(id)}`, {
+      notFound: {kind: 'transaction', id},
+    })
+  }
+
+  async transactionResend(id: string): Promise<{ediTransactionId: string}> {
+    const raw = await this.platformJson<{ediTransactionId?: string}>(
+      `/platform/edi_transactions/${encodeURIComponent(id)}/resend`,
+      {
+        notFound: {kind: 'transaction', id},
+        method: 'POST',
+        // A refused resend (inbound document, purged content, ...) arrives as a
+        // nested {code, reason}; the server's message says which, so print it.
+        rejected: (fault) => new TediError(fault.message || 'The resend was refused.'),
+      },
+    )
+    return {ediTransactionId: raw.ediTransactionId ?? id}
+  }
+
+  async resultList(query: ResultListQuery): Promise<Page<PlatformResult>> {
+    const url = new URL(`${this.base}/platform/results`)
+    applyQuery(url, {node: query.node, trace: query.trace, limit: query.limit, cursor: query.cursor})
+    const raw = await this.platformJson<{results?: PlatformResult[]} & RawPagination>(url)
+    return pageOf(raw.results, raw)
+  }
+
+  async resultGet(id: string): Promise<PlatformResult> {
+    return this.platformJson<PlatformResult>(`/platform/results/${encodeURIComponent(id)}`, {
+      notFound: {kind: 'result', id},
+    })
+  }
+
+  async logList(query: LogQuery): Promise<Page<LogLine>> {
+    const url = new URL(`${this.base}/platform/logs`)
+    applyQuery(url, {
+      trace: query.trace,
+      level: query.level,
+      since: query.since,
+      limit: query.limit,
+      cursor: query.cursor,
+    })
+    const raw = await this.platformJson<{logs?: LogLine[]} & RawPagination>(url)
+    return pageOf(raw.logs, raw)
+  }
+
+  async feedList(query: FeedQuery): Promise<Page<FeedEntry>> {
+    const url = new URL(`${this.base}/platform/feed_entries`)
+    applyQuery(url, {
+      direction: query.direction,
+      status: query.status,
+      partner: query.partner,
+      trace: query.trace,
+      since: query.since,
+      limit: query.limit,
+      cursor: query.cursor,
+    })
+    const raw = await this.platformJson<{feedEntries?: FeedEntry[]} & RawPagination>(url)
+    return pageOf(raw.feedEntries, raw)
+  }
+
+  /** `GET /platform/artifacts/:id` answers raw bytes, not JSON. */
+  async artifactGet(id: string): Promise<ArtifactContent> {
+    if (!this.opts.token) throw new NotAuthenticatedError()
+    const res = await this.send(`${this.base}/platform/artifacts/${encodeURIComponent(id)}`, {
+      headers: this.authHeaders(),
+    })
+    if (!res.ok) await this.throwForStatus(res, {notFound: {kind: 'artifact', id}})
+    const disposition = res.headers.get('content-disposition') ?? ''
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1] ?? null
+    return {
+      bytes: new Uint8Array(await res.arrayBuffer()),
+      contentType: res.headers.get('content-type'),
+      filename,
+    }
+  }
+
+  async partnerSend(key: string, code: string, contents: unknown, filename?: string): Promise<PartnerSendReceipt> {
+    const raw = await this.platformJson<PartnerSendReceipt>(
+      `/platform/partners/${encodeURIComponent(key)}/ts/${encodeURIComponent(code)}`,
+      {
+        method: 'POST',
+        body: {contents, filename},
+        rejected: submissionRefusal,
+        notFound: {kind: 'partner', id: key},
+      },
+    )
+    return raw
+  }
+
+  async partnerReceive(key: string, contents: string, filename?: string): Promise<PartnerReceiveReceipt> {
+    return this.platformJson<PartnerReceiveReceipt>(`/platform/partners/${encodeURIComponent(key)}/edi`, {
+      method: 'POST',
+      body: {contents, filename},
+      rejected: submissionRefusal,
+      notFound: {kind: 'partner', id: key},
+    })
+  }
+
+  /**
+   * Shared plumbing for the JSON data-plane endpoints: auth required, JSON in
+   * and out, errors mapped through the one status mapper with per-call hooks
+   * for 404 wording and rejected submissions.
+   */
+  private async platformJson<T>(
+    path: string | URL,
+    opts: ErrorContext & {method?: string; body?: unknown} = {},
+  ): Promise<T> {
+    if (!this.opts.token) throw new NotAuthenticatedError()
+    const url = typeof path === 'string' ? `${this.base}${path}` : path
+    const fetchOpts: FetchOptions = {headers: this.authHeaders(), method: opts.method}
+    if (opts.body !== undefined) {
+      fetchOpts.headers = {...fetchOpts.headers, 'content-type': 'application/json'}
+      fetchOpts.body = JSON.stringify(opts.body)
+    }
+
+    const res = await this.send(url, fetchOpts)
+    if (!res.ok) await this.throwForStatus(res, {missing: opts.missing, notFound: opts.notFound, rejected: opts.rejected})
+    return (await res.json()) as T
+  }
+}
+
+/** The pagination envelope every platform list answers with. */
+interface RawPagination {
+  pagination?: {hasMore?: boolean; nextCursor?: string | null}
+}
+
+function pageOf<T>(items: T[] | undefined, raw: RawPagination): Page<T> {
+  return {
+    items: items ?? [],
+    hasMore: Boolean(raw.pagination?.hasMore),
+    nextCursor: raw.pagination?.nextCursor ?? null,
+  }
+}
+
+/**
+ * Turn a rejected partner submission into the right error. Only `invalid_edi`
+ * is a verdict on the caller's file; everything else (configuration errors,
+ * missing parameters, an oversize body) is worded by the server and exits
+ * "could not run".
+ */
+function submissionRefusal(fault: ServerFault): TediError {
+  if (fault.code === 'invalid_edi') {
+    return new TediError(fault.message || 'The file does not look like an X12 interchange.', {
+      exitCode: EXIT_DEFECT,
+    })
+  }
+
+  return new TediError(fault.message || `The submission was refused (HTTP ${fault.status}).`)
 }
 
 // ---------------------------------------------------------------------------

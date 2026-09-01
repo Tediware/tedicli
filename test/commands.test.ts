@@ -215,19 +215,22 @@ describe('commands (authenticated)', () => {
 })
 
 describe('commands against the real client when identity is unavailable', () => {
-  // The HTTP client's whoami throws IdentityUnavailableError before any network
-  // call, so these run hermetically with the mock disabled and no live server.
+  // Whoami now performs a real request, so stub fetch with a 404 (a server
+  // older than /platform/whoami) to keep these hermetic with the mock disabled.
   let dir: string
+  const realFetch = globalThis.fetch
 
   beforeEach(async () => {
     dir = await makeConfigDir(true)
     process.env.TEDI_CONFIG_DIR = dir
     process.env.TEDI_API_MOCK = '0'
+    globalThis.fetch = (async () => new Response('', {status: 404})) as typeof fetch
   })
 
   afterEach(async () => {
     delete process.env.TEDI_CONFIG_DIR
     delete process.env.TEDI_API_MOCK
+    globalThis.fetch = realFetch
     await rm(dir, {recursive: true, force: true})
   })
 
@@ -235,7 +238,7 @@ describe('commands against the real client when identity is unavailable', () => 
     const {stdout, error} = await run(['whoami'])
     assert.equal(error, undefined)
     assert.match(stdout, /key is present \(\.\.\.1234\)/)
-    assert.match(stdout, /not available yet/i)
+    assert.match(stdout, /does not report identity/i)
   })
 
   it('auth status confirms a stored key without the identity endpoint', async () => {

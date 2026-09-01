@@ -553,9 +553,110 @@ describe('HttpApiClient', () => {
     })
   })
 
-  describe('endpoints that do not exist yet', () => {
-    it('whoami throws a not-available error', async () => {
-      await assert.rejects(client('sk-test').whoami(), /identity endpoint is not available/i)
+  describe('platform data plane', () => {
+    it('whoami maps the identity response', async () => {
+      const {calls} = stubFetch(() => ({
+        body: JSON.stringify({
+          organization: {id: 'org-1', name: 'Acme EDI'},
+          keyScope: 'standard',
+          keyLabel: 'CI key',
+          serviceTermsAccepted: true,
+        }),
+      }))
+      const id = await client('sk-test-1234').whoami()
+      assert.match(calls[0].url, /\/platform\/whoami$/)
+      assert.equal(calls[0].headers.authorization, 'Key sk-test-1234')
+      assert.deepEqual(id, {
+        organization: 'Acme EDI',
+        organizationId: 'org-1',
+        keyScope: 'standard',
+        keyLabel: 'CI key',
+        termsAccepted: true,
+        keyHint: '1234',
+      })
+    })
+
+    it('whoami degrades to IdentityUnavailableError on a 404 (older server)', async () => {
+      stubFetch(() => ({status: 404, body: ''}))
+      await assert.rejects(client('sk-test').whoami(), /no identity endpoint/i)
+    })
+
+    it('transactionList builds the query and unwraps rows plus pagination', async () => {
+      const {calls} = stubFetch(() => ({
+        body: JSON.stringify({
+          ediTransactions: [{id: 't1'}],
+          pagination: {hasMore: true, nextCursor: 'abc'},
+        }),
+      }))
+      const page = await client('sk-test').transactionList({incoming: false, transactionSetIdentifier: '850', limit: 5})
+      const url = new URL(calls[0].url)
+      assert.equal(url.pathname, '/platform/edi_transactions')
+      assert.equal(url.searchParams.get('incoming'), 'false')
+      assert.equal(url.searchParams.get('transaction_set_identifier'), '850')
+      assert.equal(url.searchParams.get('limit'), '5')
+      assert.equal(page.items.length, 1)
+      assert.equal(page.hasMore, true)
+      assert.equal(page.nextCursor, 'abc')
+    })
+
+    it('transactionGet turns a coded 404 into a data-not-found defect', async () => {
+      stubFetch(() => ({status: 404, body: JSON.stringify({error: {message: 'EDI transaction not found', code: 'not_found'}})}))
+      await assert.rejects(client('sk-test').transactionGet('nope'), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /No transaction 'nope'/)
+        assert.equal(err.exitCode, EXIT_DEFECT)
+        return true
+      })
+    })
+
+    it('transactionGet reads a code-less 404 as a missing route, not a missing record', async () => {
+      // An older server has no show route; its routing 404 carries no error
+      // code. Asserting "no such transaction" (exit 1) there would hand CI a
+      // false verdict about a record that exists.
+      stubFetch(() => ({status: 404, body: '<html>Not Found</html>'}))
+      await assert.rejects(client('sk-test').transactionGet('real-id'), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /no transaction endpoint/)
+        assert.equal(err.exitCode, EXIT_UNUSABLE)
+        return true
+      })
+    })
+
+    it('reads the nested platform error body and surfaces a sandbox 403 verbatim', async () => {
+      stubFetch(() => ({
+        status: 403,
+        body: JSON.stringify({error: {message: "Sandbox keys are read-only and scoped to their sink's results.", code: 'forbidden'}}),
+      }))
+      await assert.rejects(client('sk-test').transactionList({}), /sandbox keys are read-only/i)
+    })
+
+    it('partnerReceive maps invalid_edi to a defect exit', async () => {
+      stubFetch(() => ({
+        status: 422,
+        body: JSON.stringify({error: {message: 'Contents do not look like an X12 interchange: Content does not start with ISA.', code: 'invalid_edi'}}),
+      }))
+      await assert.rejects(client('sk-test').partnerReceive('ACME', 'not edi'), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.equal(err.exitCode, EXIT_DEFECT)
+        assert.match(err.message, /does not start with ISA/)
+        return true
+      })
+    })
+
+    it('partnerSend posts contents and unwraps the receipt', async () => {
+      const {calls} = stubFetch(() => ({
+        body: JSON.stringify({
+          message: 'Processing queued',
+          interchangeControlNumber: '000000001',
+          groupControlNumber: '000000002',
+          traceGuid: 'trace-1',
+        }),
+      }))
+      const receipt = await client('sk-test').partnerSend('acme', '850', {po: 1}, 'order.json')
+      assert.match(calls[0].url, /\/platform\/partners\/acme\/ts\/850$/)
+      assert.equal(calls[0].method, 'POST')
+      assert.deepEqual(JSON.parse(calls[0].body!), {contents: {po: 1}, filename: 'order.json'})
+      assert.equal(receipt.traceGuid, 'trace-1')
     })
   })
 })

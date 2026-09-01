@@ -14,12 +14,14 @@ integration contract behind it.
 
 ## Base
 
-- Endpoints are under `<base>/api/x12` (reference) and `<base>/api/edi`
-  (inspection), where `<base>` is the Tediware host. The CLI defaults to
-  production, `https://tediware.com`, and the host is configurable
-  (`api.baseUrl` / `TEDI_API_BASE_URL`).
+- Endpoints are under `<base>/api/x12` (reference), `<base>/api/edi`
+  (inspection), and `<base>/platform` (the data plane), where `<base>` is the
+  Tediware host. The CLI defaults to production, `https://tediware.com`, and
+  the host is configurable (`api.baseUrl` / `TEDI_API_BASE_URL`).
 - There is no version prefix in the path.
 - Reference requests are all `GET`. Inspection is a `POST` with a JSON body.
+  Data-plane reads are `GET`; submissions and resend are `POST` with JSON
+  bodies.
 
 ## Authentication
 
@@ -367,38 +369,19 @@ server's diagnosis goes to stderr as an error instead.
 For client-side backoff. The CLI cannot see these counters; it only sees the
 `429` and the `Retry-After` header.
 
-Reference (`/api/x12`):
+Every surface is throttled in layers: per API key per minute and per day, with
+per-IP layers deliberately above the per-key ones so a well-behaved caller hits
+its own credential limit first and a shared NAT does not punish it for someone
+else's traffic. Inspection is throttled harder than reference (each request
+parses a whole document); the data plane has its own read, submit, and resend
+ceilings, with resend the tightest because each accepted call puts a document
+on a trading partner's wire.
 
-```
-+----------------------+----------------+
-| Scope                | Limit          |
-+----------------------+----------------+
-| Per API key          | 60 / minute    |
-| Per API key          | 1,000 / day    |
-| Per IP               | 90 / minute    |
-| Per IP               | 10,000 / day   |
-+----------------------+----------------+
-```
-
-Inspection (`/api/edi/inspect`) is throttled harder, because each request parses
-a whole document:
-
-```
-+----------------------+----------------+
-| Scope                | Limit          |
-+----------------------+----------------+
-| Per API key          | 30 / minute    |
-| Per API key          | 1,000 / day    |
-| Per IP               | 45 / minute    |
-| Per IP               | 2,000 / day    |
-+----------------------+----------------+
-```
-
-The per-IP layers sit deliberately above the per-key ones, so a well-behaved
-caller hits its own credential limit first and a shared NAT does not punish it
-for someone else's traffic. (There is also a per-session limit; it never applies
-to the CLI, which sends no cookies.) The per-key inspection limits are tunable
-server-side, so treat the numbers as indicative and branch on the `429`.
+The numbers are server-side and tunable, and this document does not quote them:
+they have drifted from reality here once already. The canonical values and
+their reasoning live in the tediware repo (`doc/architecture/api_authentication.md`
+and `config/initializers/rack_attack.rb`). The CLI never needs them — it
+branches on the `429`.
 
 On `429`, respect `Retry-After` (whole seconds). Because there is a daily
 ceiling, a `Retry-After` can occasionally be large; surface the wait rather than
@@ -499,14 +482,48 @@ re-proposed:
   and consent decision, not a ranking feature. Do not build it as a side effect of
   a formatting fix.
 
+## Data plane (`/platform`)
+
+The caller's own operational data, on the same `Authorization: Key` credential.
+Unlike reference, structured JSON is the point here, so every response is JSON
+and every CLI data-plane command offers `--json`.
+
+Two contract differences from the reference plane:
+
+- **Errors are nested**: `{ "error": { "message", "code", "reason"? } }`, not
+  the flat `{error, code}` body. `code` names the class of failure (a small
+  closed set); `reason`, when present, names the condition within it.
+- **No terms gate**: service terms are enforced at use on reference and
+  inspection only.
+
+Endpoints:
+
+- `GET /platform/whoami` — identity: `{organization: {id, name}, keyScope,
+  keyLabel, serviceTermsAccepted}`.
+- `GET /platform/edi_transactions` — list; filters `incoming`,
+  `transaction_set_identifier`, `trace`, `ack_status`; cursor pagination.
+- `GET /platform/edi_transactions/:id` — envelope plus `status`/`flowName`
+  plus the trace's results (with artifact pointers).
+- `POST /platform/edi_transactions/:id/resend` — 202; byte-for-byte
+  re-delivery, queued.
+- `GET /platform/results` — list; filters `node`, `trace`.
+- `GET /platform/results/:id` — one result.
+- `GET /platform/logs?trace=...` — trace-scoped logs, ascending; `trace` is
+  required; filters `level`, `since`.
+- `GET /platform/feed_entries` — ascending feed; an empty page echoes the
+  cursor, which is what makes tailing work.
+- `GET /platform/artifacts/:id` — raw document bytes (attachment).
+- `POST /platform/partners/:key/ts/:code` — own-shape outbound submission.
+- `POST /platform/partners/:key/edi` — raw-EDI inbound submission
+  (`invalid_edi` when contents are not an X12 interchange).
+
+Every list answers `{<rows>, pagination: {hasMore, nextCursor}}` with `limit`
+capped at 100 and an opaque `cursor`. Sandbox-scoped keys are refused
+(`forbidden`) everywhere except `whoami`, `results/:id`, and `artifacts/:id`.
+
 ## Not available yet (do not build against)
 
-- A `whoami` / identity endpoint for an API-key principal. It does not exist yet;
-  it is deferred auth work. When built it will live in the platform's `Platform`
-  API namespace and return principal metadata only (organization, scope,
-  service-terms state, key label). Until then, validate a key by making a real
-  request and reading the status code, not by calling `whoami`.
-- Any control-plane or data-plane endpoints (connections, partners, mappings,
-  flows, transmissions). These are not built.
-- The JSON `index`/`show`, `search`, and `favourites` actions under this
-  namespace are web-app internals; the CLI does not use them.
+- Any control-plane endpoints (connection, partner, mapping, and flow CRUD).
+  These are not built.
+- The JSON `index`/`show`, `search`, and `favourites` actions under the
+  reference namespace are web-app internals; the CLI does not use them.

@@ -212,18 +212,34 @@ export class RateLimitedError extends TediError {
 }
 
 /**
- * Raised when the identity/whoami endpoint is requested but does not exist yet
- * (see API.md "Not available yet"). Commands catch this to degrade gracefully
- * rather than failing — the CLI still knows a key is stored locally.
+ * Raised when the server has no identity endpoint (a 404 on /platform/whoami,
+ * from a server older than the endpoint). Commands catch this to degrade
+ * gracefully rather than failing — the CLI still knows a key is stored locally.
  */
 export class IdentityUnavailableError extends TediError {
   constructor() {
-    super('The identity endpoint is not available yet.', {
+    super('This server has no identity endpoint.', {
       suggestions: [
-        'Identity/whoami is deferred auth work (see API.md).',
+        'The server at api.baseUrl predates `whoami` — check `tedi config get api.baseUrl`.',
         'To confirm a key actually authenticates, run `tedi x12 seg ISA` (a reference read that requires a valid key; `x12 releases` does not).',
       ],
     })
     this.name = 'IdentityUnavailableError'
+  }
+}
+
+/**
+ * Raised when a data-plane lookup by id answers 404: the platform ran the query
+ * and there is no such record in the caller's organization. A result, not a
+ * failure to reach the platform, so it exits like a defect (matching
+ * NotFoundError on the reference plane).
+ */
+export class DataNotFoundError extends TediError {
+  constructor(kind: string, id: string) {
+    super(`No ${kind} '${id}' in your organization.`, {
+      suggestions: ['Check the id for a copy-paste slip; ids appear in list output and transaction detail.'],
+      exitCode: EXIT_DEFECT,
+    })
+    this.name = 'DataNotFoundError'
   }
 }

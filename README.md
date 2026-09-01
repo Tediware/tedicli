@@ -201,6 +201,33 @@ The same split runs through the rest of the CLI: a lookup for a code that doesn'
 exist exits `1`, since that is a real answer, while anything that stopped a
 command from running — a mistyped flag, no key, an unreachable server — exits `2`.
 
+## Your data
+
+The data-plane commands read and drive your own organization's traffic. They
+need a standard API key, and unlike the reference commands they all support
+`--json` for scripting.
+
+```bash
+tedi transaction list --outgoing --ack unacknowledged
+tedi transaction get <id>            # envelope, outcome, stored artifacts
+tedi transaction logs <id>           # the trace's processing logs
+tedi transaction resend <id>         # re-deliver an outbound document
+
+tedi result list --trace <guid>
+tedi result get <id>
+
+tedi feed list                       # deliverable documents and errors
+tedi feed list --follow              # tail it live (JSONL with --json)
+
+tedi artifact get <id> -o file.edi   # download stored document bytes
+
+tedi partner send ACME 850 order.json   # your JSON in, EDI out to the partner
+tedi partner receive ACME 850.edi       # raw partner EDI into the inbound flow
+```
+
+`tedi whoami` and `tedi auth status` report the key's organization, scope, and
+service-terms state.
+
 ## Configuration
 
 ```bash
