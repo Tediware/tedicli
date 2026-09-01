@@ -25,3 +25,6 @@ npm-debug.log*
 # Personal, machine-local notes and scripts (not shared)
 *.local.md
 *.local.sh
+
+# Agent instructions (local, not shared)
+CLAUDE.md
