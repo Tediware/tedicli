@@ -228,6 +228,45 @@ tedi partner receive ACME 850.edi       # raw partner EDI into the inbound flow
 `tedi whoami` and `tedi auth status` report the key's organization, scope, and
 service-terms state.
 
+## Connect your agent
+
+Tediware hosts a [Model Context Protocol](https://modelcontextprotocol.io) server
+at `https://tediware.com/mcp`. An agent connected to it gets the X12 reference
+and your own EDI traffic as tools, under the same key, rate limits and service
+terms as the CLI.
+
+`tedi mcp serve` bridges that server to stdio for agents that launch MCP servers
+as subprocesses, using the key from `tedi auth login` so it never has to be
+pasted into the agent's configuration:
+
+```bash
+claude mcp add tediware -- tedi mcp serve     # Claude Code
+codex mcp add tediware -- tedi mcp serve      # Codex
+```
+
+For clients configured by file (Cursor, Windsurf, Claude Desktop and most
+others), the entry is the same command:
+
+```json
+{
+  "mcpServers": {
+    "tediware": {"command": "tedi", "args": ["mcp", "serve"]}
+  }
+}
+```
+
+The bridge forwards every request to the platform and holds no tool logic of its
+own. It needs a standard API key; run `tedi auth login` first, or set
+`TEDI_API_KEY` in the agent's environment. A client that speaks Streamable HTTP
+directly can skip the CLI and connect to `https://tediware.com/mcp` with an
+`Authorization: Key <api_key>` header.
+
+The X12 reference tools answer with the rendered page as text, the same page a
+person reads, and never as structured data. The data tools return structured
+content, as `--json` does here. Two of the tools (`edi_inspect`,
+`partner_receive`) send a document to the server; scrub it first (`tedi edi
+obfuscate`) if it carries anything an agent should not see.
+
 ## Configuration
 
 ```bash

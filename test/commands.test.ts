@@ -323,4 +323,12 @@ describe('commands (unauthenticated)', () => {
     assert.equal(error, undefined)
     assert.match(stdout, /Not signed in/i)
   })
+
+  it('mcp serve refuses to start without a key, before reading stdin', async () => {
+    const {stdout, error} = await run(['mcp', 'serve'])
+    assert.ok(error)
+    assert.match(error!.message, /not signed in/i)
+    // Nothing but MCP messages may reach stdout, so a refusal leaves it empty.
+    assert.equal(stdout, '')
+  })
 })

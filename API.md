@@ -6,6 +6,10 @@ The HTTP contract the CLI consumes. Two surfaces are documented here:
   lookup, read-only.
 - **EDI inspection** (`/api/edi`), backing `tedi edi inspect` — the CLI sends a
   document up and gets a rendered report back.
+- **The data plane** (`/platform`), backing `tedi transaction`, `result`,
+  `feed`, `artifact`, `partner` and `whoami` — the caller's own traffic.
+- **MCP** (`/mcp`), backing `tedi mcp serve` — the platform's Model Context
+  Protocol server, which the CLI bridges to stdio without adding anything.
 
 This is not a public product API. It is reachable and stable enough to build the
 CLI against, but it is versioned with the CLI, not published as a third-party
@@ -15,8 +19,8 @@ integration contract behind it.
 ## Base
 
 - Endpoints are under `<base>/api/x12` (reference), `<base>/api/edi`
-  (inspection), and `<base>/platform` (the data plane), where `<base>` is the
-  Tediware host. The CLI defaults to production, `https://tediware.com`, and
+  (inspection), `<base>/platform` (the data plane), and `<base>/mcp` (the MCP
+  server), where `<base>` is the Tediware host. The CLI defaults to production, `https://tediware.com`, and
   the host is configurable (`api.baseUrl` / `TEDI_API_BASE_URL`).
 - There is no version prefix in the path.
 - Reference requests are all `GET`. Inspection is a `POST` with a JSON body.
@@ -64,7 +68,7 @@ Response `200`:
 {
   "data": {
     "releases": [
-      { "id": "<uuid>", "code": "004010", "name": "Release 004010", "hipaa": false, "published_at": "2000-01-01T00:00:00Z" }
+      { "id": 9, "code": "004010", "name": "Release 004010", "hipaa": false, "published_at": "2000-01-01T00:00:00Z" }
     ]
   }
 }
@@ -520,6 +524,86 @@ Endpoints:
 Every list answers `{<rows>, pagination: {hasMore, nextCursor}}` with `limit`
 capped at 100 and an opaque `cursor`. Sandbox-scoped keys are refused
 (`forbidden`) everywhere except `whoami`, `results/:id`, and `artifacts/:id`.
+
+## MCP (`/mcp`)
+
+The platform hosts a Model Context Protocol server at `POST <base>/mcp`,
+revision `2026-07-28` only. That revision is stateless (no `initialize`
+handshake, no session id, no server-initiated stream), so every call is one
+self-describing HTTP POST on the same `Authorization: Key` credential as
+everything else.
+
+`tedi mcp serve` is a transport adapter for clients that launch MCP servers as
+stdio subprocesses. It reads newline-delimited JSON-RPC on stdin, sends each
+request as one POST whose body is the message unchanged, and writes the reply
+back as one line. It holds no tool logic and no tool list; `server/discover` and
+`tools/list` are forwarded like everything else so the server's `instructions`
+and definitions reach the agent unaltered. Because the credential comes from
+`tedi auth login` (or `TEDI_API_KEY`), a key never has to be written into an
+agent's configuration file.
+
+What the bridge adds to each POST, per the Streamable HTTP binding:
+
+- `MCP-Protocol-Version`, copied from `params._meta["io.modelcontextprotocol/protocolVersion"]`.
+- `Mcp-Method`, copied from `method`.
+- `Mcp-Name`, copied from `params.name` (`tools/call`, `prompts/get`) or
+  `params.uri` (`resources/read`); Base64-wrapped as `=?base64?...?=` when the
+  value is not plain visible ASCII.
+- `Accept: application/json, text/event-stream`. The server answers with plain
+  JSON today; an SSE reply is read and each event written as its own line, and a
+  stream that closes without answering the request is reported as `-32002`.
+- No `Mcp-Param-*` headers. The binding requires clients to mirror tool
+  parameters a server annotates with `x-mcp-header`; no Tediware tool does, and
+  the server does not validate them. Annotating one server-side means teaching
+  the bridge to mirror it first.
+
+The server rejects a header that disagrees with the body (`-32020`), which is
+what lets it meter `Mcp-Name` into the same reference, inspection and platform
+ceilings the REST endpoints use. The bridge only ever copies headers from the
+body, so this refusal is not reachable through it.
+
+What the bridge answers itself, and only these:
+
+- A line that is not JSON: `-32700`. A JSON value that is not a JSON-RPC 2.0
+  request: `-32600`. Both on `id: null`.
+- A request naming no protocol version in `_meta` (a legacy `initialize`, for
+  instance): `-32022` with `data.supported: ["2026-07-28"]`, without forwarding.
+  The server would call this a header mismatch, which is the wrong words on a
+  transport with no headers.
+- A `tools/call`, `resources/read` or `prompts/get` with no string `name` (or
+  `uri`): `-32602`, without forwarding, for the same reason.
+- A `429` from the rate limiter, which carries the REST `{error: {code:
+  "rate_limited"}}` body rather than a JSON-RPC one: `-32001` with
+  `data.reason: "rate_limited"` and `data.retryAfterSeconds` from `Retry-After`.
+- A reply with no JSON-RPC body (a gateway 502, an unreachable host, the 60
+  second deadline): `-32002` with `data.reason` of `upstream_error`,
+  `unreachable` or `timeout`.
+
+Every JSON-RPC body the server returns passes through whatever its HTTP status
+(an error the server wrote on `id: null`, such as the oversized-body refusal,
+is re-keyed to the request's id, since on stdio nothing else correlates it), so `401`/`403` refusals (`-32000` with `data.reason` of `unauthorized`,
+`organization_disabled`, `sandbox_key_not_supported` or
+`service_terms_required`), unknown tools (`-32602`) and unknown methods
+(`-32601`) reach the client exactly as the server wrote them. Tool-level
+failures (an unknown segment code, an unparseable document) are ordinary
+results with `isError: true`, also untouched.
+
+Notifications are not forwarded. The core protocol defines one client-to-server
+notification, `notifications/cancelled`, and it acts on the bridge: the matching
+in-flight POST is aborted and nothing further is written for that id. Any other
+notification is dropped with a note on stderr, since a notification must not be
+answered and the server refuses them. Stdout carries MCP messages only.
+
+**The reference-tools-return-text rule.** `x12_segment`, `x12_element` and
+`x12_transaction_set` answer with one Markdown text block, declare no
+`outputSchema`, and return no `structuredContent`; the server strips the field
+rather than trusting the tools. This is the presentation-only rule above,
+mapped onto MCP, and the bridge must never add a structured rendering of that
+text. `x12_releases` is structured (a version index, not dictionary content),
+`edi_inspect` carries its findings counters beside the rendered report, and the
+data-plane tools return `structuredContent` freely, as `--json` does.
+
+Sandbox keys are refused on `/mcp` outright (`403`, `sandbox_key_not_supported`).
 
 ## Not available yet (do not build against)
 

@@ -75,6 +75,9 @@
       "edi": {
         "description": "Work with your own EDI files: obfuscate personal data locally, or inspect an interchange."
       },
+      "mcp": {
+        "description": "Connect an AI agent to Tediware over the Model Context Protocol."
+      },
       "x12": {
         "description": "Look up the X12 reference standard (segments, elements, transaction sets)."
       }
