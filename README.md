@@ -3,10 +3,16 @@
 The official command-line client for the [Tediware](https://tediware.com) platform.
 
 `tedi` is a thin client over the Tediware API — no proprietary logic and no
-licensed data live in the CLI. It covers **X12 reference lookup** and **your own
-EDI files**: scrubbing personal data out of an interchange on your machine, and
-inspecting one against the standard. It is built to grow into a control-plane
-companion for the platform.
+licensed data live in the CLI. It includes:
+
+**X12 reference lookup**: access transactions, segments and elements from multiple X12
+releases.
+**Tools for your own EDI files**: scrubbing personal data out of an interchange on your
+machine and inspecting one against the standard.
+**Tediware data plane access**: read logs, EDI transactions, results, and artifacts.
+Send JSON for delivery as EDI, receive EDI as JSON, and more.
+
+It is built to grow into a control-plane companion for the platform.
 
 ## Install
 
@@ -120,7 +126,7 @@ Faults in a value survive too: each replacement is invalid in the same way the
 value it replaces was. A date of birth that isn't a real date stays impossible
 rather than being quietly replaced with a valid one, and a date range that ran
 backwards still does — so a file you scrub before sending to a partner still
-reproduces the problem you're chasing. Relationships *between* values are not
+reproduces the problem you're chasing. Relationships _between_ values are not
 preserved, since the values are scrubbed independently: a date of birth that
 fell after the date of service may no longer.
 
@@ -167,11 +173,11 @@ reference, `--json` is not offered.
 Built for CI: the exit code distinguishes a bad document from a run that never
 happened, so a gate can tell "this file is broken" from "the key expired".
 
-| Exit | Meaning                                                                     |
-| ---- | --------------------------------------------------------------------------- |
-| `0`  | The inspection ran, every check completed, and it found nothing.             |
-| `1`  | It found errors — or the server could not read the file as EDI at all.       |
-| `2`  | It did not run, or its result cannot be trusted. Nothing was learned.        |
+| Exit | Meaning                                                                |
+| ---- | ---------------------------------------------------------------------- |
+| `0`  | The inspection ran, every check completed, and it found nothing.       |
+| `1`  | It found errors — or the server could not read the file as EDI at all. |
+| `2`  | It did not run, or its result cannot be trusted. Nothing was learned.  |
 
 `--fail-on notice` counts notices toward `1` as well; the default, `--fail-on
 error`, exits `1` only for errors. Either way the report prints, and a one-line
@@ -204,8 +210,7 @@ command from running — a mistyped flag, no key, an unreachable server — exit
 ## Your data
 
 The data-plane commands read and drive your own organization's traffic. They
-need a standard API key, and unlike the reference commands they all support
-`--json` for scripting.
+need a standard API key and they all support `--json` for scripting.
 
 ```bash
 tedi transaction list --outgoing --ack unacknowledged
@@ -250,7 +255,7 @@ others), the entry is the same command:
 ```json
 {
   "mcpServers": {
-    "tediware": {"command": "tedi", "args": ["mcp", "serve"]}
+    "tediware": { "command": "tedi", "args": ["mcp", "serve"] }
   }
 }
 ```
