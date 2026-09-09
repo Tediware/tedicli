@@ -1,7 +1,7 @@
 {
   "name": "@tediware/tedi",
   "version": "0.4.0",
-  "description": "Official command-line client for the Tediware platform. Thin client over the Tediware API: X12 reference lookup, plus scrubbing and inspecting your own EDI files.",
+  "description": "Official command-line client for the Tediware platform. Thin client over the Tediware API: X12 reference lookup, scrubbing and inspecting your own EDI files, your organization's EDI traffic, and an MCP bridge.",
   "keywords": [
     "tediware",
     "tedi",
@@ -51,7 +51,7 @@
   "oclif": {
     "bin": "tedi",
     "dirname": "tedi",
-    "description": "ʕ·ᴥ·ʔ  Official command-line client for the Tediware platform https://tediware.com. X12 reference lookup, plus scrubbing and inspecting your own EDI files.",
+    "description": "\u0295\u00b7\u1d25\u00b7\u0294  Official command-line client for the Tediware platform https://tediware.com.\n\nLook up the X12 reference (x12). Work with your own EDI files (edi). Read and drive your organization's EDI traffic (transaction, result, feed, artifact, partner). Bridge the platform's tools to a coding agent (mcp).\n\nBuilt for people, CI jobs and agents alike:\n\n- Auth: `tedi auth login`, or set TEDI_API_KEY in the environment. The key is never a flag.\n- Exit codes: 0 ran clean, 1 a finding about your input, 2 did not run or cannot be trusted. Never treat 2 as a pass.\n- Locality: `edi obfuscate` never leaves the machine; every command that talks to the server says so in its help.\n- Output: --json on your own data, `--format markdown` for reports and reference pages, no color when piped.",
     "commands": "./dist/commands",
     "topicSeparator": " ",
     "plugins": [

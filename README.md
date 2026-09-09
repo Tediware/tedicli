@@ -11,8 +11,14 @@ releases.
 machine and inspecting one against the standard.
 **Tediware data plane access**: read logs, EDI transactions, results, and artifacts.
 Send JSON for delivery as EDI, receive EDI as JSON, and more.
+**An agent connection**: `tedi mcp serve` puts the platform's tools in front of a
+coding agent.
 
-It is built to grow into a control-plane companion for the platform.
+It is built to grow into a control-plane companion for the platform. The
+interface is the same whether a person, a CI job, or an agent is driving it:
+non-interactive auth, a three-way exit-code contract, `--json` on your own data,
+and clean output when nothing is watching. [AGENTS.md](./AGENTS.md) collects
+those properties in one place.
 
 ## Install
 
@@ -41,8 +47,8 @@ history or process listings.
 
 ```bash
 tedi auth login            # prompts for the key with no echo, then stores it
-cat key.txt | tedi auth login   # or pipe it in (CI/non-interactive)
-export TEDI_API_KEY=...    # or set it in the environment (one-off / CI; no login needed)
+cat key.txt | tedi auth login   # or pipe it in (CI, agents, anything non-interactive)
+export TEDI_API_KEY=...    # or set it in the environment (one-off, CI, an agent's env; no login needed)
 
 tedi auth status           # show whether you're signed in
 tedi whoami                # show the authenticated identity (when available)
@@ -102,6 +108,12 @@ gets the complete list by default, for the same reason it gets no color. Pass
 Commands for your own EDI files. Locality is a per-command property, stated in
 each command's help: `edi obfuscate` runs entirely on your machine and needs no
 API key, while `edi inspect` sends the document to the platform.
+
+A real EDI file is a personal-data problem the moment it leaves the machine,
+whether that is to a colleague, a support ticket, a partner, or a coding agent's
+context. `edi obfuscate` is the step before any of those: local, no key, and
+format-preserving, so the scrubbed file still parses and still reproduces the
+problem you are chasing.
 
 ```bash
 tedi edi obfuscate <file>              # obfuscated EDI to stdout ('-' reads stdin)
@@ -168,44 +180,46 @@ diagnose it.
 Reports are `--format console` (default) or `--format markdown`; as with X12
 reference, `--json` is not offered.
 
-#### Exit codes
+Exit codes follow the CLI-wide contract in [Exit codes](#exit-codes): `1` is a
+finding, `2` is a run that cannot be trusted.
 
-Built for CI: the exit code distinguishes a bad document from a run that never
-happened, so a gate can tell "this file is broken" from "the key expired".
+## Exit codes
 
-| Exit | Meaning                                                                |
-| ---- | ---------------------------------------------------------------------- |
-| `0`  | The inspection ran, every check completed, and it found nothing.       |
-| `1`  | It found errors — or the server could not read the file as EDI at all. |
-| `2`  | It did not run, or its result cannot be trusted. Nothing was learned.  |
+Every command uses the same three-way split, so a CI gate or an agent can tell
+"the document is bad" from "the run never happened". Only `1` is a verdict about
+your input. `2` means nothing was learned, and must never be treated as a pass.
 
-`--fail-on notice` counts notices toward `1` as well; the default, `--fail-on
-error`, exits `1` only for errors. Either way the report prints, and a one-line
-count goes to stderr so a redirected report still tells you why the build failed.
+| Exit | Meaning                                                                  |
+| ---- | ------------------------------------------------------------------------ |
+| `0`  | The command ran to completion and found nothing to report.               |
+| `1`  | A real answer that is a finding: errors in a document, a code that does not exist. |
+| `2`  | The command did not run, or its result cannot be trusted. Nothing was learned. |
 
-Exit `2` covers the ordinary tool failures — no key, rate limited, network gone,
-a release the platform has no reference data for, a fault on the server — and two
-cases where a clean-looking report is not evidence of anything: when the server
-says a check did not run (the inspection is fail-soft, so a crashed check takes
-its findings with it), and when it reports no finding counts at all. Both warn
-loudly on stderr rather than passing quietly.
+Exit `2` covers the ordinary tool failures: a mistyped flag, no key, rate
+limited, network gone, a server fault, a server too old to know an endpoint. A
+data-plane `404` counts as "not found" (exit `1`) only when the server says so
+in the body; a bare routing `404` from an older server exits `2`, so a stale
+server can never tell a job that an existing record is missing.
 
-Findings still outrank an incomplete run: a crashed check loses findings, it
-never invents them, so anything that did surface exits `1` with the incompleteness
-noted as a caveat.
+`edi inspect` adds two cases where a clean-looking report is not evidence of
+anything: when the server says a check did not run (the inspection is
+fail-soft, so a crashed check takes its findings with it), and when it reports
+no finding counts at all. Both exit `2` and warn on stderr rather than passing
+quietly. Findings still outrank an incomplete run: a crashed check loses
+findings, it never invents them, so anything that did surface exits `1` with
+the incompleteness noted as a caveat. `--fail-on notice` counts notices toward
+`1` as well; the default, `--fail-on error`, exits `1` only for errors. Either
+way the report prints, and a one-line count goes to stderr so a redirected
+report still says why the build failed.
 
 ```bash
 tedi edi inspect claims.edi > report.txt
 case $? in
   0) echo "clean" ;;
   1) echo "the interchange has problems"; cat report.txt ;;
-  *) echo "inspection did not run — do not treat this as a pass" ;;
+  *) echo "inspection did not run: do not treat this as a pass" ;;
 esac
 ```
-
-The same split runs through the rest of the CLI: a lookup for a code that doesn't
-exist exits `1`, since that is a real answer, while anything that stopped a
-command from running — a mistyped flag, no key, an unreachable server — exits `2`.
 
 ## Your data
 
@@ -236,9 +250,9 @@ service-terms state.
 ## Connect your agent
 
 Tediware hosts a [Model Context Protocol](https://modelcontextprotocol.io) server
-at `https://tediware.com/mcp`. An agent connected to it gets the X12 reference
-and your own EDI traffic as tools, under the same key, rate limits and service
-terms as the CLI.
+at `https://tediware.com/mcp`. Its tools cover the same ground as this CLI, under
+the same key, rate limits and service terms: X12 reference lookup, interchange
+inspection, and reading and driving your own EDI traffic.
 
 `tedi mcp serve` bridges that server to stdio for agents that launch MCP servers
 as subprocesses, using the key from `tedi auth login` so it never has to be
@@ -269,8 +283,8 @@ directly can skip the CLI and connect to `https://tediware.com/mcp` with an
 The X12 reference tools answer with the rendered page as text, the same page a
 person reads, and never as structured data. The data tools return structured
 content, as `--json` does here. Two of the tools (`edi_inspect`,
-`partner_receive`) send a document to the server; scrub it first (`tedi edi
-obfuscate`) if it carries anything an agent should not see.
+`partner_receive`) send a document to the server; run `tedi edi obfuscate` on it
+first if it carries anything that should stay on your machine.
 
 ## Configuration
 

@@ -18,7 +18,7 @@ Pass --no-obfuscate to upload the file verbatim. That is worth doing when a find
 
 Findings anchor to the report's line numbers: the report reprints the interchange one segment per line.
 
-Exit codes are meant for CI: 0 when the inspection ran and found nothing, 1 when it found something (see --fail-on), and 2 when it could not run — no key, rate limited, an unsupported release, a server fault, or an inspection the server reports as incomplete. Only 1 means "your document is bad".`
+Exit codes are meant for CI and agents: 0 when the inspection ran and found nothing, 1 when it found something (see --fail-on), and 2 when it could not run — no key, rate limited, an unsupported release, a server fault, or an inspection the server reports as incomplete. Only 1 means "your document is bad".`
 
   static examples = [
     '<%= config.bin %> edi inspect claims.edi',
