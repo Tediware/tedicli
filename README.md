@@ -309,7 +309,7 @@ tedi implementation schema <id>      # the JSON shape a mapping targets
 tedi implementation guide <id> --format markdown -o acme-850.md
 tedi implementation export <id> -o acme-850.json   # the portable file the import endpoint accepts
 
-tedi source-schema list              # the shapes you send, and the mappings reading each
+tedi source list              # the shapes you send, and the mappings reading each
 ```
 
 Every receipt (`partner send`, `partner receive`, `transaction resend`) ends

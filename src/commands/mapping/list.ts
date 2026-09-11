@@ -5,7 +5,7 @@ import {MappingPage} from '../../lib/platform.js'
 import {renderTable} from '../../lib/table.js'
 
 export default class MappingList extends PlatformCommand<typeof MappingList> {
-  static summary = 'List your mappings: direction, the implementation and source schema each targets, version, and the partners using it.'
+  static summary = 'List your mappings: direction, the implementation and source each targets, version, and the partners using it.'
 
   static description = SERVER_DATA
 
@@ -37,13 +37,13 @@ export default class MappingList extends PlatformCommand<typeof MappingList> {
 
     this.log(
       renderTable([
-        ['ID', 'NAME', 'DIRECTION', 'IMPLEMENTATION', 'SOURCE SCHEMA', 'VERSION', 'PLACEHOLDERS', 'PARTNERS'],
+        ['ID', 'NAME', 'DIRECTION', 'IMPLEMENTATION', 'SOURCE', 'VERSION', 'PLACEHOLDERS', 'PARTNERS'],
         ...page.mappings.map((m) => [
           m.id,
           m.name,
           m.direction,
           m.implementation?.name ?? '-',
-          m.sourceSchema?.name ?? '-',
+          m.source?.name ?? '-',
           m.currentVersion === null ? '-' : String(m.currentVersion),
           String(m.placeholderCount),
           m.partners.join(',') || '-',

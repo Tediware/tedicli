@@ -1,22 +1,22 @@
 import {Args} from '@oclif/core'
 
 import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
-import {SourceSchemaDetail} from '../../lib/platform.js'
+import {SourceDetail} from '../../lib/platform.js'
 
-export default class SourceSchemaGet extends PlatformCommand<typeof SourceSchemaGet> {
-  static summary = 'Show one source schema: its sample document, the semantics note, and the mappings reading it.'
+export default class SourceGet extends PlatformCommand<typeof SourceGet> {
+  static summary = 'Show one source: its sample document, the semantics note, and the mappings reading it.'
 
   static description = SERVER_DATA
 
-  static examples = ['<%= config.bin %> source-schema get 9c1b2a3d-...', '<%= config.bin %> source-schema get 9c1b2a3d-... --json']
+  static examples = ['<%= config.bin %> source get 9c1b2a3d-...', '<%= config.bin %> source get 9c1b2a3d-... --json']
 
   static args = {
-    id: Args.string({description: 'Source schema id (from `source-schema list` or `mapping get`).', required: true}),
+    id: Args.string({description: 'Source id (from `source list` or `mapping get`).', required: true}),
   }
 
-  async run(): Promise<SourceSchemaDetail> {
+  async run(): Promise<SourceDetail> {
     const client = await this.getAuthedClient()
-    const s = await client.sourceSchemaGet(this.requireId(this.args.id, 'source schema id'))
+    const s = await client.sourceGet(this.requireId(this.args.id, 'source id'))
 
     this.log(s.name)
     this.log(`Id             ${s.id}`)

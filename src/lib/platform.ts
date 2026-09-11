@@ -445,7 +445,7 @@ export interface MappingSummary {
   name: string
   direction: Direction
   implementation: NamedRef | null
-  sourceSchema: NamedRef | null
+  source: NamedRef | null
   currentVersion: number | null
   placeholderCount: number
   /** Keys of the partners whose transaction set settings use it. */
@@ -492,7 +492,7 @@ export interface MappingVersionPage extends Paged {
   versions: MappingVersionSummary[]
 }
 
-export interface SourceSchemaSummary {
+export interface SourceSummary {
   id: string
   name: string
   mappings: NamedRef[]
@@ -500,12 +500,12 @@ export interface SourceSchemaSummary {
   updatedAt?: string
 }
 
-export interface SourceSchemaPage extends Paged {
-  sourceSchemas: SourceSchemaSummary[]
+export interface SourcePage extends Paged {
+  sources: SourceSummary[]
 }
 
 /** The embed on a mapping: the sample and the semantics note. */
-export interface SourceSchema {
+export interface Source {
   id: string
   name: string
   sample: unknown
@@ -514,14 +514,14 @@ export interface SourceSchema {
   updatedAt?: string
 }
 
-export interface SourceSchemaDetail extends SourceSchema {
+export interface SourceDetail extends Source {
   mappings: NamedRef[]
 }
 
-export interface MappingDetail extends Omit<MappingSummary, 'sourceSchema'> {
+export interface MappingDetail extends Omit<MappingSummary, 'source'> {
   description: string | null
   tags: string[]
-  sourceSchema: SourceSchema | null
+  source: Source | null
   current: MappingVersion | null
 }
 

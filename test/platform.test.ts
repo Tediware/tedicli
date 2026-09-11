@@ -412,7 +412,7 @@ describe('data-plane commands (mock backend)', () => {
     const get = await run(['mapping', 'get', 'mock-mapping-2'])
     assert.equal(get.error, undefined)
     assert.match(get.stdout, /Implementation Acme 856 \(mock-impl-1\)/)
-    assert.match(get.stdout, /Source schema\s+Shipment \(mock-source-schema-1\)/)
+    assert.match(get.stdout, /Source\s+Shipment \(mock-source-1\)/)
     assert.match(get.stdout, /Version\s+2, Added carrier placeholder/)
     assert.match(get.stdout, /line 1, column 28: "SCAC" \(not in source\)/)
     assert.match(get.stdout, /```\n\{ "heading": \{ "carrier": \$placeholder/)
@@ -479,16 +479,16 @@ describe('data-plane commands (mock backend)', () => {
     assert.equal(doc.implementation.transaction_set_code, '856')
   })
 
-  it('source-schema list and get show the sample and the mappings reading it', async () => {
-    const list = await run(['source-schema', 'list'])
+  it('source list and get show the sample and the mappings reading it', async () => {
+    const list = await run(['source', 'list'])
     assert.equal(list.error, undefined)
-    assert.match(list.stdout, /mock-source-schema-1\s+Shipment\s+Acme 856/)
+    assert.match(list.stdout, /mock-source-1\s+Shipment\s+Acme 856/)
 
-    const get = await run(['source-schema', 'get', 'mock-source-schema-1'])
+    const get = await run(['source', 'get', 'mock-source-1'])
     assert.equal(get.error, undefined)
     assert.match(get.stdout, /Semantics\s+One shipment with its lines\./)
     assert.match(get.stdout, /"number": "SH-1"/)
-    const json = await run(['source-schema', 'get', 'mock-source-schema-1', '--json'])
+    const json = await run(['source', 'get', 'mock-source-1', '--json'])
     assert.equal(JSON.parse(json.stdout).sample.shipment.number, 'SH-1')
   })
 })

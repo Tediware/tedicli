@@ -108,8 +108,8 @@
       "result": {
         "description": "Processing results: one node's work on one document, with its error and artifacts."
       },
-      "source-schema": {
-        "description": "The declared shapes of the JSON you send, and the mappings reading each. Read-only."
+      "source": {
+        "description": "Your sources: sample JSON of what you send, and the mappings reading each. Read-only."
       },
       "transaction": {
         "description": "EDI transactions: the documents sent to and received from partners, with their envelopes and outcomes."

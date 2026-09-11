@@ -54,7 +54,7 @@ explains its exit code.
 | `edi inspect`                               | Uploads the file (scrubbed first by default). |
 | `x12 *`                                     | Server lookup.                    |
 | `transaction`, `result`, `feed`, `artifact`, `trace`, `partner list`, `partner get` | Server, your organization's data. |
-| `connection`, `envelope`, `webhook`, `flow`, `mapping`, `implementation`, `source-schema` | Server, your organization's configuration, read-only. |
+| `connection`, `envelope`, `webhook`, `flow`, `mapping`, `implementation`, `source` | Server, your organization's configuration, read-only. |
 | `partner send`, `partner receive`, `transaction resend` | Server, and the document is delivered or processed. |
 | `mcp serve`                                 | Forwards to the server. No tool logic locally. |
 | `whoami`, `auth login`, `auth status`       | Server. `auth status` reads only the key's label and degrades without it. |
@@ -100,7 +100,7 @@ segments deserve a look before sharing.
   `implementation guide` takes the same posture for your own implementations;
   the structure as data is `implementation schema`.
 - The configuration commands (`connection`, `envelope`, `webhook`, `flow`,
-  `mapping`, `implementation`, `source-schema`) take ids, never names. A
+  `mapping`, `implementation`, `source`) take ids, never names. A
   partner key is a list filter (`--partner`). Every `{id, name}` in one
   command's output is an id the next command accepts, so walk the graph rather
   than guessing: `partner get` names the mapping, `mapping get` names the
@@ -141,7 +141,7 @@ guess at any step:
 
 ```bash
 tedi partner get ACME --json                   # transactionSets[].mapping.id, .implementation.id
-tedi mapping get <mapping-id> --json                # the transformation, with the source schema it reads embedded
+tedi mapping get <mapping-id> --json                # the transformation, with the source it reads embedded
 tedi mapping get <mapping-id> -o acme-856.jsonata   # the transformation alone, as a file
 tedi implementation schema <implementation-id> -o acme-856.schema.json   # the shape it must produce
 tedi implementation guide <implementation-id> --format markdown          # the partner's rules, readable

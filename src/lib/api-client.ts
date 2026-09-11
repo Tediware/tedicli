@@ -72,8 +72,8 @@ import {
   ResendReceipt,
   ResultListQuery,
   ResultPage,
-  SourceSchemaDetail,
-  SourceSchemaPage,
+  SourceDetail,
+  SourcePage,
   TraceDetail,
   TransactionDetail,
   TransactionListQuery,
@@ -218,8 +218,8 @@ export interface ApiClient {
   implementationGuide(id: string, format: OutputFormat): Promise<string>
   /** The portable export the import endpoint accepts, as parsed JSON. */
   implementationExport(id: string): Promise<unknown>
-  sourceSchemaList(query: PageQuery): Promise<SourceSchemaPage>
-  sourceSchemaGet(id: string): Promise<SourceSchemaDetail>
+  sourceList(query: PageQuery): Promise<SourcePage>
+  sourceGet(id: string): Promise<SourceDetail>
 }
 
 export interface ApiClientOptions {
@@ -632,7 +632,7 @@ export class MockApiClient implements ApiClient {
       ...row,
       description: 'Ships to Acme.',
       tags: [],
-      sourceSchema: row.sourceSchema ? MOCK_SOURCE_SCHEMA : null,
+      source: row.source ? MOCK_SOURCE : null,
       current: MOCK_MAPPING_VERSIONS[MOCK_MAPPING_VERSIONS.length - 1] ?? null,
     }
   }
@@ -720,16 +720,16 @@ export class MockApiClient implements ApiClient {
     }
   }
 
-  async sourceSchemaList(query: PageQuery): Promise<SourceSchemaPage> {
+  async sourceList(query: PageQuery): Promise<SourcePage> {
     this.requireToken()
-    const rows = [{id: MOCK_SOURCE_SCHEMA.id, name: MOCK_SOURCE_SCHEMA.name, mappings: [{id: 'mock-mapping-2', name: 'Acme 856'}]}]
-    return {sourceSchemas: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+    const rows = [{id: MOCK_SOURCE.id, name: MOCK_SOURCE.name, mappings: [{id: 'mock-mapping-2', name: 'Acme 856'}]}]
+    return {sources: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
   }
 
-  async sourceSchemaGet(id: string): Promise<SourceSchemaDetail> {
+  async sourceGet(id: string): Promise<SourceDetail> {
     this.requireToken()
-    if (id !== MOCK_SOURCE_SCHEMA.id) throw new DataNotFoundError('source schema', id)
-    return {...MOCK_SOURCE_SCHEMA, mappings: [{id: 'mock-mapping-2', name: 'Acme 856'}]}
+    if (id !== MOCK_SOURCE.id) throw new DataNotFoundError('source', id)
+    return {...MOCK_SOURCE, mappings: [{id: 'mock-mapping-2', name: 'Acme 856'}]}
   }
 }
 
@@ -771,16 +771,16 @@ const MOCK_FLOWS: FlowPage['flows'] = [
   {id: 'mock-flow-2', name: 'Acme Outbound', direction: 'outbound', status: 'active', frequency: 0, versionNumber: 2, usesSandbox: false, partner: MOCK_PARTNER_REF},
 ]
 
-const MOCK_SOURCE_SCHEMA = {
-  id: 'mock-source-schema-1',
+const MOCK_SOURCE = {
+  id: 'mock-source-1',
   name: 'Shipment',
   sample: {shipment: {number: 'SH-1', lines: [{sku: 'A1', qty: 2}]}},
   semantics: 'One shipment with its lines.',
 }
 
 const MOCK_MAPPINGS: MappingPage['mappings'] = [
-  {id: 'mock-mapping-1', name: 'Acme 850', direction: 'inbound', implementation: {id: 'mock-impl-2', name: 'Acme 850'}, sourceSchema: null, currentVersion: 1, placeholderCount: 0, partners: ['ACME']},
-  {id: 'mock-mapping-2', name: 'Acme 856', direction: 'outbound', implementation: {id: 'mock-impl-1', name: 'Acme 856'}, sourceSchema: {id: 'mock-source-schema-1', name: 'Shipment'}, currentVersion: 2, placeholderCount: 1, partners: ['ACME']},
+  {id: 'mock-mapping-1', name: 'Acme 850', direction: 'inbound', implementation: {id: 'mock-impl-2', name: 'Acme 850'}, source: null, currentVersion: 1, placeholderCount: 0, partners: ['ACME']},
+  {id: 'mock-mapping-2', name: 'Acme 856', direction: 'outbound', implementation: {id: 'mock-impl-1', name: 'Acme 856'}, source: {id: 'mock-source-1', name: 'Shipment'}, currentVersion: 2, placeholderCount: 1, partners: ['ACME']},
 ]
 
 const MOCK_MAPPING_VERSIONS: MappingVersion[] = [
@@ -1716,13 +1716,13 @@ export class HttpApiClient implements ApiClient {
     })
   }
 
-  async sourceSchemaList(query: PageQuery): Promise<SourceSchemaPage> {
-    const raw = await this.platformList<Partial<SourceSchemaPage>>('source_schemas', query)
-    return {sourceSchemas: raw.sourceSchemas ?? [], pagination: paginationOf(raw)}
+  async sourceList(query: PageQuery): Promise<SourcePage> {
+    const raw = await this.platformList<Partial<SourcePage>>('sources', query)
+    return {sources: raw.sources ?? [], pagination: paginationOf(raw)}
   }
 
-  sourceSchemaGet(id: string): Promise<SourceSchemaDetail> {
-    return this.platformShow<SourceSchemaDetail>('source_schemas', 'source schema', id)
+  sourceGet(id: string): Promise<SourceDetail> {
+    return this.platformShow<SourceDetail>('sources', 'source', id)
   }
 
   /** A control-plane list: the shared page query plus the resource's own filters. */

@@ -609,7 +609,7 @@ GET  /platform/implementations [/:id]        your own implementations; filter tr
 GET  /platform/implementations/:id/schema    the JSON schema a mapping targets
 GET  /platform/implementations/:id/guide     the rendered guide, ?variant=console|markdown
 GET  /platform/implementations/:id/export    the portable export
-GET  /platform/source_schemas [/:id]         source schemas
+GET  /platform/sources [/:id]         sources
 ```
 
 Every list answers `{<collection>, pagination: {hasMore, nextCursor}}`, takes
@@ -702,7 +702,7 @@ GET /platform/mappings [/:id]
 GET /platform/mappings/:id/versions [/:number]
 GET /platform/implementations [/:id]
 GET /platform/implementations/:id/{schema|guide|export}
-GET /platform/source_schemas [/:id]
+GET /platform/sources [/:id]
 ```
 
 The rest of the read-only control plane, on the partner pattern: compact list
@@ -713,11 +713,11 @@ resource that points at another returns `{id, name}` (`{id, key, name}` for a
 partner), and every resource lists what points at it: a connection its
 `partners`, an envelope and a webhook their `partners` each with a `role`, a
 mapping the keys of the `partners` using it, an implementation its `mappings` and
-`partners`, a source schema its `mappings`.
+`partners`, a source its `mappings`.
 
 A miss on any show is `404 not_found` with `reason` naming the resource
 (`connection`, `envelope`, `webhook`, `flow`, `mapping`, `mapping_version`,
-`implementation`, `source_schema`), and the CLI prints "No <resource> '<id>'
+`implementation`, `source`), and the CLI prints "No <resource> '<id>'
 in your organization." A malformed id is a miss, not a 400.
 
 Flows list only the current version of each; superseded versions drop out.
@@ -728,7 +728,7 @@ are refused with `invalid_parameter`; an unknown partner key is an empty page.
 
 A mapping's show carries `current` (the latest version: `versionNumber`,
 `transformation`, `placeholders`, `note`, `createdAt`, `createdBy: {name}`)
-and the source schema embedded in full (`sample`, `semantics`); the
+and the source embedded in full (`sample`, `semantics`); the
 implementation stays a reference. `versions/:number` returns one version in
 the `current` shape, which is what `--version` on `mapping get` prints and
 what `--json` emits there. `current.versionNumber` is `null` on a mapping
@@ -745,7 +745,7 @@ refuses `--json` the way `x12` does. `export` is the portable document keyed
 by natural identifiers; the import side of that round-trip is an
 administrator's endpoint and stays out of the CLI.
 
-Backs `tedi connection|envelope|webhook|flow|mapping|source-schema list|get`,
+Backs `tedi connection|envelope|webhook|flow|mapping|source list|get`,
 `tedi mapping versions`, and `tedi implementation list|get|schema|guide|export`.
 
 ### Traces

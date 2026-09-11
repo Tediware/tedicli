@@ -43,7 +43,7 @@ Prints the current version's transformation in a fenced block. --version reads a
       if (m.description) this.log(`Description    ${m.description}`)
       if (m.tags.length > 0) this.log(`Tags           ${m.tags.join(', ')}`)
       this.log(`Implementation ${m.implementation ? `${m.implementation.name} (${m.implementation.id})` : '-'}`)
-      this.log(`Source schema  ${m.sourceSchema ? `${m.sourceSchema.name} (${m.sourceSchema.id})` : '-'}`)
+      this.log(`Source  ${m.source ? `${m.source.name} (${m.source.id})` : '-'}`)
       this.log(`Partners       ${m.partners.join(', ') || '-'}`)
       if (version) this.logVersion(version)
       else this.log('Transformation none yet')
