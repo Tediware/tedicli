@@ -421,6 +421,7 @@ export class MockApiClient implements ApiClient {
     }
     if (query.partner) rows = rows.filter((t) => t.partnerKey?.toLowerCase() === query.partner?.toLowerCase())
     if (query.trace) rows = rows.filter((t) => t.traceGuid === query.trace)
+    if (query.status) rows = rows.filter((t) => t.status === query.status)
     return {ediTransactions: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
   }
 
@@ -821,6 +822,7 @@ const MOCK_TRANSACTIONS: TransactionSummary[] = [
     traceGuid: MOCK_TRACE,
     incoming: true,
     direction: 'inbound',
+    status: 'delivered',
     acknowledgmentStatus: null,
     partnerKey: 'ACME',
     resendCount: 0,
@@ -841,6 +843,7 @@ const MOCK_TRANSACTIONS: TransactionSummary[] = [
     traceGuid: 'mock-trace-outbound',
     incoming: false,
     direction: 'outbound',
+    status: 'delivered',
     acknowledgmentStatus: 'accepted',
     partnerKey: 'ACME',
     resendCount: 0,
@@ -1500,6 +1503,7 @@ export class HttpApiClient implements ApiClient {
       transaction_set_identifier: query.transactionSetIdentifier,
       trace: query.trace,
       ack_status: query.ackStatus,
+      status: query.status,
       partner: query.partner,
       limit: query.limit,
       cursor: query.cursor,

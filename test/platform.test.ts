@@ -52,8 +52,8 @@ describe('data-plane commands (mock backend)', () => {
   it('transaction list renders a table with inbound|outbound, the partner, and second-precision UTC times', async () => {
     const {stdout, error} = await run(['transaction', 'list'])
     assert.equal(error, undefined)
-    assert.match(stdout, /ID\s+DIRECTION\s+SET\s+PARTNER\s+ICN\s+ACK\s+CREATED/)
-    assert.match(stdout, /mock-txn-1\s+inbound\s+850\s+ACME\s+000000001\s+n\/a\s+2026-01-01 12:00:00Z/)
+    assert.match(stdout, /ID\s+DIRECTION\s+SET\s+PARTNER\s+ICN\s+STATUS\s+ACK\s+CREATED/)
+    assert.match(stdout, /mock-txn-1\s+inbound\s+850\s+ACME\s+000000001\s+delivered\s+n\/a\s+2026-01-01 12:00:00Z/)
   })
 
   it('transaction list --json is the REST envelope', async () => {
@@ -71,6 +71,15 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(stdout, /mock-txn-2\s+outbound\s+856/)
     const {error} = await run(['transaction', 'list', '--outgoing'])
     assert.match(error?.message ?? '', /Nonexistent flag/)
+  })
+
+  it('transaction list --status filters and refuses other words', async () => {
+    const errored = await run(['transaction', 'list', '--status', 'error'])
+    assert.match(errored.stdout, /No transactions match\./)
+    const delivered = await run(['transaction', 'list', '--status', 'delivered'])
+    assert.match(delivered.stdout, /mock-txn-1/)
+    const {error} = await run(['transaction', 'list', '--status', 'errored'])
+    assert.match(error?.message ?? '', /Expected --status=errored to be one of: delivered, error/)
   })
 
   it('transaction list --set filters, with --ts as a hidden alias', async () => {

@@ -47,6 +47,8 @@ export interface TransactionSummary {
   /** Shipped and kept; `direction` is the spelling to read. */
   incoming: boolean
   direction: Direction
+  /** Absent on a server that predates the stored status. */
+  status?: 'error' | 'delivered'
   acknowledgmentStatus?: 'accepted' | 'rejected' | 'unacknowledged' | null
   partnerKey?: string | null
   duplicateOf?: string | null
@@ -61,6 +63,7 @@ export interface TransactionListQuery extends PageQuery {
   transactionSetIdentifier?: string
   trace?: string
   ackStatus?: string
+  status?: string
   partner?: string
 }
 

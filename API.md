@@ -804,8 +804,14 @@ Backs `tedi trace <guid>`, and `--trace` on `transaction get` and
 ### Transactions
 
 `GET /platform/edi_transactions` filters on `incoming`, `direction`,
-`transaction_set_identifier`, `trace`, `ack_status` and `partner`, newest
-first.
+`transaction_set_identifier`, `trace`, `ack_status`, `status` and `partner`,
+newest first.
+
+`status=delivered|error` is the processing status the show already carried,
+now stored on the row so the list can filter on it in SQL, and emitted on every
+list row. It is `error` when a result on the document's run recorded a
+failure and does not change back: a resend that succeeds leaves the original
+failure on the trace. Backs `--status` on `transaction list`.
 
 `direction=inbound|outbound` is the vocabulary every other record already used.
 `incoming=true|false` stays, shipped and consumed; both are accepted and the
@@ -814,16 +820,14 @@ serializer emits both. Sending both with values that disagree is
 `incoming=` parameter carry `TODO(deprecate)` at their sites and will not be
 removed while a consumer still reads them.
 
-`partner=<key>` matches the counterparty ISA id (the sender inbound, the
-receiver outbound) against each partner's external envelope, and the same
-resolution fills `partnerKey` on a row, so a caller stops inferring a partner
-from a receiver id.
-
-`partnerKey` is absent when nothing matches, and also when two partners share
-that identifier: the resolution is ambiguous and the field is omitted rather
-than guessed at. Those two partners are indistinguishable on the wire, so
-`partner=` returns both their documents while every row's `partnerKey` stays
-absent. It looks like the filter did nothing; it did not.
+`partnerKey` is the partner recorded when the document was processed (the
+partner whose flow received it, or the partner it was submitted to), and
+`partner=<key>` filters on it, so two partners sharing an external envelope
+still get their own rows. Rows that predate the recording resolve the partner
+from the counterparty ISA id (the sender inbound, the receiver outbound)
+against each partner's external envelope; on those, `partnerKey` is absent
+when nothing matches or when two partners share the identifier, rather than
+guessed at.
 
 `duplicateOf` names an earlier inbound transmission from the same sender with
 the same interchange control number, when there was one. It is a note, not a

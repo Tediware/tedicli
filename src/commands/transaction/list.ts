@@ -9,11 +9,12 @@ export default class TransactionList extends PlatformCommand<typeof TransactionL
 
   static description = `${SERVER_DATA}
 
-ACK is the acknowledgment the partner sent back: accepted, rejected, unacknowledged (one is expected and has not arrived), or n/a (none is expected: inbound documents and 997s).`
+STATUS is error when a result on the document's processing run recorded a failure, and delivered otherwise. ACK is the acknowledgment the partner sent back: accepted, rejected, unacknowledged (one is expected and has not arrived), or n/a (none is expected: inbound documents and 997s).`
 
   static examples = [
     '<%= config.bin %> transaction list',
     '<%= config.bin %> transaction list --direction outbound --ack unacknowledged',
+    '<%= config.bin %> transaction list --status error',
     '<%= config.bin %> transaction list --partner ACME --set 850 --json',
   ]
 
@@ -24,6 +25,10 @@ ACK is the acknowledgment the partner sent back: accepted, rejected, unacknowled
     ts: Flags.string({hidden: true}),
     partner: Flags.string({description: 'Filter by partner key.'}),
     trace: Flags.string({description: 'Filter by trace GUID.'}),
+    status: Flags.string({
+      description: 'Filter by processing status.',
+      options: ['delivered', 'error'],
+    }),
     ack: Flags.string({
       description:
         'Filter by acknowledgment status. acknowledged means accepted or rejected; unacknowledged means one is expected and has not arrived.',
@@ -39,6 +44,7 @@ ACK is the acknowledgment the partner sent back: accepted, rejected, unacknowled
       partner: this.flags.partner,
       trace: this.flags.trace,
       ackStatus: this.flags.ack,
+      status: this.flags.status,
       limit: this.flags.limit,
       cursor: this.flags.cursor,
     })
@@ -50,13 +56,14 @@ ACK is the acknowledgment the partner sent back: accepted, rejected, unacknowled
 
     this.log(
       renderTable([
-        ['ID', 'DIRECTION', 'SET', 'PARTNER', 'ICN', 'ACK', 'CREATED'],
+        ['ID', 'DIRECTION', 'SET', 'PARTNER', 'ICN', 'STATUS', 'ACK', 'CREATED'],
         ...page.ediTransactions.map((t) => [
           t.id,
           t.direction ?? (t.incoming ? 'inbound' : 'outbound'),
           cell(t.transactionSetIdentifier),
           cell(t.partnerKey),
           cell(t.interchangeControlNumber),
+          cell(t.status),
           t.acknowledgmentStatus ?? 'n/a',
           formatTime(t.createdAt),
         ]),
