@@ -13,11 +13,12 @@ import {readFile, rm} from 'node:fs/promises'
 import {join} from 'node:path'
 
 import {writeFileAtomic} from './atomic-write.js'
+import {FileAccessError} from './errors.js'
 
 /**
  * Environment variable that supplies an API key without `tedi auth login`. It
- * overrides any stored credential at request time — useful for CI and one-off
- * use. Setting it does not persist anything; `auth login` persists separately.
+ * overrides any stored credential at request time, which is useful for CI and
+ * one-off use. Setting it does not persist anything; `auth login` persists separately.
  */
 export const API_KEY_ENV = 'TEDI_API_KEY'
 
@@ -48,7 +49,7 @@ export class FileCredentialStore implements CredentialStore {
       raw = await readFile(this.file, 'utf8')
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-      throw err
+      throw new FileAccessError('read', this.file, err)
     }
 
     // A corrupt or partial file (e.g. an interrupted write) is treated as
@@ -76,7 +77,11 @@ export class FileCredentialStore implements CredentialStore {
   }
 
   async clear(): Promise<void> {
-    await rm(this.file, {force: true})
+    try {
+      await rm(this.file, {force: true})
+    } catch (err) {
+      throw new FileAccessError('write', this.file, err)
+    }
   }
 }
 

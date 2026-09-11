@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
+import {Readable} from 'node:stream'
 import {afterEach, beforeEach, describe, it} from 'node:test'
 
 import {runCommand} from '@oclif/test'
@@ -12,9 +13,22 @@ delete process.env.TEDI_API_KEY
 
 const root = process.cwd()
 const run = async (args: string[]) => {
-  const result = await runCommand(args, {root}, {stripAnsi: true})
   process.exitCode = 0
-  return result
+  const result = await runCommand(args, {root}, {stripAnsi: true})
+  const thrown = (result.error as {oclif?: {exit?: number}} | undefined)?.oclif?.exit
+  const exit = thrown ?? Number(process.exitCode ?? 0)
+  process.exitCode = 0
+  return {...result, exit}
+}
+
+async function withStdin<T>(content: string, fn: () => Promise<T>): Promise<T> {
+  const realStdin = process.stdin
+  Object.defineProperty(process, 'stdin', {value: Readable.from([content]), configurable: true})
+  try {
+    return await fn()
+  } finally {
+    Object.defineProperty(process, 'stdin', {value: realStdin, configurable: true})
+  }
 }
 
 // Data-plane commands against the mock backend, exercising each command's
@@ -35,60 +49,139 @@ describe('data-plane commands (mock backend)', () => {
     await rm(dir, {recursive: true, force: true})
   })
 
-  it('transaction list renders a table', async () => {
+  it('transaction list renders a table with inbound|outbound, the partner, and second-precision UTC times', async () => {
     const {stdout, error} = await run(['transaction', 'list'])
     assert.equal(error, undefined)
-    assert.match(stdout, /ID\s+DIR\s+SET/)
-    assert.match(stdout, /mock-txn-1\s+in\s+850/)
+    assert.match(stdout, /ID\s+DIRECTION\s+SET\s+PARTNER\s+ICN\s+ACK\s+CREATED/)
+    assert.match(stdout, /mock-txn-1\s+inbound\s+850\s+ACME\s+000000001\s+n\/a\s+2026-01-01 12:00:00Z/)
   })
 
-  it('transaction list --json returns the page envelope', async () => {
+  it('transaction list --json is the REST envelope', async () => {
     const {stdout, error} = await run(['transaction', 'list', '--json'])
     assert.equal(error, undefined)
     const page = JSON.parse(stdout)
-    assert.equal(page.items[0].id, 'mock-txn-1')
-    assert.equal(page.hasMore, false)
+    assert.equal(page.ediTransactions[0].id, 'mock-txn-1')
+    assert.deepEqual(page.pagination, {hasMore: false, nextCursor: null})
+    assert.equal(page.items, undefined)
   })
 
-  it('transaction list --outgoing filters by direction', async () => {
-    const {stdout} = await run(['transaction', 'list', '--outgoing'])
+  it('transaction list --direction filters, and --incoming/--outgoing are gone', async () => {
+    const {stdout} = await run(['transaction', 'list', '--direction', 'outbound'])
     assert.doesNotMatch(stdout, /mock-txn-1/)
-    assert.match(stdout, /mock-txn-2\s+out\s+856/)
+    assert.match(stdout, /mock-txn-2\s+outbound\s+856/)
+    const {error} = await run(['transaction', 'list', '--outgoing'])
+    assert.match(error?.message ?? '', /Nonexistent flag/)
   })
 
-  it('transaction get shows envelope, artifacts, and the artifact hint', async () => {
+  it('transaction list --set filters, with --ts as a hidden alias', async () => {
+    const set = await run(['transaction', 'list', '--set', '856'])
+    assert.doesNotMatch(set.stdout, /mock-txn-1/)
+    const ts = await run(['transaction', 'list', '--ts', '856'])
+    assert.equal(ts.stdout, set.stdout)
+    const help = await run(['transaction', 'list', '--help'])
+    assert.doesNotMatch(help.stdout, /--ts/)
+  })
+
+  it('--limit is bounded at parse time', async () => {
+    const {error, exit} = await run(['transaction', 'list', '--limit', '101'])
+    assert.match(error?.message ?? '', /less than or equal to 100/)
+    assert.equal(exit, 2)
+  })
+
+  it('transaction get shows the envelope, the four artifact roles, and no whole-trace table', async () => {
     const {stdout, error} = await run(['transaction', 'get', 'mock-txn-1'])
     assert.equal(error, undefined)
     assert.match(stdout, /Direction\s+inbound/)
+    assert.match(stdout, /Partner\s+ACME/)
     assert.match(stdout, /Status\s+delivered/)
+    assert.match(stdout, /Acknowledgment\s+n\/a/)
+    assert.match(stdout, /Created\s+2026-01-01 12:00:00Z/)
     assert.match(stdout, /tedi artifact get/)
-    assert.match(stdout, /mock-artifact-1\s+edi/)
+    assert.match(stdout, /Input\s+mock-artifact-1\s+in\.edi\s+from EDI Endpoint/)
+    assert.match(stdout, /Output\s+-/)
+    assert.doesNotMatch(stdout, /USAGE\s+TYPE/)
   })
 
-  it('transaction get exits 1 for an unknown id', async () => {
-    const {error} = await run(['transaction', 'get', 'nope'])
+  it('transaction get --trace resolves the one transaction on the trace', async () => {
+    const {stdout, error} = await run(['transaction', 'get', '--trace', 'aaaaaaaa-0000-0000-0000-000000000001'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Transaction set\s+850/)
+    const both = await run(['transaction', 'get', 'mock-txn-1', '--trace', 'x'])
+    assert.match(both.error?.message ?? '', /not both/)
+    const neither = await run(['transaction', 'get'])
+    assert.match(neither.error?.message ?? '', /A transaction id or --trace/)
+  })
+
+  it('transaction get exits 1 for an unknown id and trims whitespace off ids', async () => {
+    const {error, exit} = await run(['transaction', 'get', 'nope'])
     assert.match(error?.message ?? '', /No transaction 'nope'/)
-    assert.equal((error as {oclif?: {exit?: number}})?.oclif?.exit, 1)
+    assert.equal(exit, 1)
+    const blank = await run(['transaction', 'get', '   '])
+    assert.equal(blank.exit, 2)
   })
 
-  it('transaction logs resolves the trace and prints lines oldest first', async () => {
+  it('transaction logs resolves the trace and prints lines oldest first with seconds', async () => {
     const {stdout, error} = await run(['transaction', 'logs', 'mock-txn-1'])
     assert.equal(error, undefined)
-    assert.match(stdout, /Received document[\s\S]*Delivered to webhook/)
+    assert.match(stdout, /2026-01-01 12:00:00Z\s+info\s+EDI Endpoint\s+\(synthetic\) Received document[\s\S]*Delivered to webhook/)
   })
 
-  it('result get shows the steps and artifacts', async () => {
+  it('transaction logs --trace reads the trace directly, and --since is parsed', async () => {
+    const {stdout, error} = await run(['transaction', 'logs', '--trace', 'aaaaaaaa-0000-0000-0000-000000000001', '--since', '2026-01-01'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Received document/)
+    const bad = await run(['transaction', 'logs', '--trace', 'aaaaaaaa-0000-0000-0000-000000000001', '--since', '2026-01-01T00:00:00'])
+    assert.match(bad.error?.message ?? '', /names no time zone/)
+  })
+
+  it('transaction resend prints the trace and the follow-up line', async () => {
+    const {stdout, error} = await run(['transaction', 'resend', 'mock-txn-2'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Resend queued for mock-txn-2/)
+    assert.match(stdout, /Follow it with: tedi trace mock-trace-outbound/)
+  })
+
+  it('result get shows status, partner, the steps and artifacts', async () => {
     const {stdout, error} = await run(['result', 'get', 'mock-result-1'])
     assert.equal(error, undefined)
+    assert.match(stdout, /Status\s+success/)
+    assert.match(stdout, /Partner\s+ACME/)
     assert.match(stdout, /EDI Endpoint > EDI to JSON/)
     assert.match(stdout, /mock-artifact-1/)
   })
 
-  it('feed list renders entries', async () => {
+  it('result list has STATUS and PARTNER columns and no DIR', async () => {
+    const {stdout, error} = await run(['result', 'list'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /ID\s+NODE\s+STATUS\s+PARTNER\s+TRACE\s+CREATED/)
+    assert.doesNotMatch(stdout, /\bDIR\b/)
+    const errors = await run(['result', 'list', '--status', 'error'])
+    assert.match(errors.stdout, /No results match/)
+  })
+
+  it('feed list renders entries with a 24-hour footer by default', async () => {
     const {stdout, error} = await run(['feed', 'list'])
     assert.equal(error, undefined)
-    assert.match(stdout, /CREATED\s+DIR\s+STATUS/)
-    assert.match(stdout, /inbound\s+success\s+ACME/)
+    assert.match(stdout, /CREATED\s+DIRECTION\s+STATUS\s+PARTNER\s+TRACE/)
+    assert.match(stdout, /2026-01-01 12:00:01Z\s+inbound\s+success\s+ACME/)
+    assert.match(stdout, /Showing the last 24 hours/)
+    const since = await run(['feed', 'list', '--since', '3d'])
+    assert.doesNotMatch(since.stdout, /Showing the last 24 hours/)
+    // A trace is a specific thing whenever it happened; no window applies.
+    const trace = await run(['feed', 'list', '--trace', 'aaaaaaaa-0000-0000-0000-000000000001'])
+    assert.doesNotMatch(trace.stdout, /Showing the last 24 hours/)
+  })
+
+  it('feed list --json is the REST envelope', async () => {
+    const {stdout} = await run(['feed', 'list', '--json'])
+    const page = JSON.parse(stdout)
+    assert.equal(page.feedEntries[0].id, 'mock-feed-1')
+    assert.equal(page.pagination.nextCursor, 'mock-cursor-1')
+  })
+
+  it('feed list --follow excludes --limit', async () => {
+    const {error} = await run(['feed', 'list', '--follow', '--limit', '5'])
+    assert.match(error?.message ?? '', /cannot also be provided|exclusive/i)
   })
 
   it('artifact get -o writes the bytes to a file', async () => {
@@ -99,13 +192,34 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(written, /^ISA\*00\*/)
   })
 
-  it('partner send parses JSON input and prints the receipt', async () => {
+  it('artifact get -o under a file names the target and the reason, never the temp path', async () => {
+    const {error, exit} = await run(['artifact', 'get', 'mock-artifact-1', '-o', join(dir, 'credentials.json', 'out.edi')])
+    assert.match(error?.message ?? '', /Cannot write .*credentials\.json\/out\.edi: a component of the path (is not a directory|already exists and is not a directory)/)
+    assert.doesNotMatch(error?.message ?? '', /\.tmp/)
+    assert.equal(exit, 2)
+  })
+
+  it('artifact get --json uses the one no-JSON wording', async () => {
+    const {error} = await run(['artifact', 'get', 'mock-artifact-1', '--json'])
+    assert.match(error?.message ?? '', /--json is not offered here: the artifact is raw document bytes/)
+  })
+
+  it('partner send parses JSON input and prints the receipt with one real follow-up line', async () => {
     const file = join(dir, 'order.json')
     await writeFile(file, JSON.stringify({po: '123'}), 'utf8')
     const {stdout, error} = await run(['partner', 'send', 'ACME', '850', file])
     assert.equal(error, undefined)
     assert.match(stdout, /Processing queued/)
-    assert.match(stdout, /mock-trace-outbound/)
+    assert.match(stdout, /Transaction mock-txn-2/)
+    assert.match(stdout, /Trace\s+mock-trace-outbound/)
+    assert.match(stdout, /^Follow it with: tedi trace mock-trace-outbound$/m)
+    assert.doesNotMatch(stdout, /<trace>/)
+  })
+
+  it('partner send reads stdin when the file is omitted on a pipe', async () => {
+    const {stdout, error} = await withStdin(JSON.stringify({po: '1'}), () => run(['partner', 'send', 'ACME', '850']))
+    assert.equal(error, undefined)
+    assert.match(stdout, /Processing queued/)
   })
 
   it('partner send rejects a non-JSON document with a receive hint', async () => {
@@ -115,24 +229,109 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(error?.message ?? '', /not valid JSON/)
   })
 
-  it('partner receive submits raw EDI and prints the trace', async () => {
+  it('partner send --wait polls the trace and reports delivery', async () => {
+    const file = join(dir, 'order.json')
+    await writeFile(file, JSON.stringify({po: '123'}), 'utf8')
+    const {stdout, error, exit} = await run(['partner', 'send', 'ACME', '850', file, '--wait'])
+    assert.equal(error, undefined)
+    assert.equal(exit, 0)
+    assert.match(stdout, /Delivered\. Details: tedi trace mock-trace-outbound/)
+  })
+
+  it('partner send --wait exits 1 on an errored trace and prints the findings', async () => {
+    const file = join(dir, 'order.json')
+    await writeFile(file, JSON.stringify({po: '123'}), 'utf8')
+    const {stdout, error, exit} = await run(['partner', 'send', 'FAILING', '850', file, '--wait'])
+    assert.equal(error, undefined)
+    assert.equal(exit, 1)
+    assert.match(stdout, /Error at Validation \+ EDI Write:/)
+    assert.match(stdout, /Validation failed against implementation 'Mock 850': 2 errors\./)
+    assert.match(stdout, /- \/heading\/BEG must have required property/)
+    assert.match(stdout, /Details: tedi trace mock-trace-failing/)
+  })
+
+  it('empty ids exit 2 before any request is made', async () => {
+    for (const args of [
+      ['partner', 'get', ' '],
+      ['result', 'get', ' '],
+      ['artifact', 'get', ' '],
+      ['transaction', 'resend', ' '],
+      ['trace', ' '],
+    ]) {
+      // The test runner trims a blank argument away, so oclif reports it as
+      // missing; a real `tedi partner get " "` reaches requireId. Both exit 2.
+      const {error, exit} = await run(args)
+      assert.match(error?.message ?? '', /is empty|Missing 1 required arg/, args.join(' '))
+      assert.equal(exit, 2, args.join(' '))
+    }
+  })
+
+  it('partner receive submits raw EDI from a file, from -, and from a bare pipe', async () => {
     const file = join(dir, 'in.edi')
     await writeFile(file, 'ISA*00*...~', 'utf8')
     const {stdout, error} = await run(['partner', 'receive', 'ACME', file])
     assert.equal(error, undefined)
-    assert.match(stdout, /mock-trace-inbound/)
+    assert.match(stdout, /Trace aaaaaaaa-0000-0000-0000-000000000001/)
+    assert.match(stdout, /^Follow it with: tedi trace aaaaaaaa-0000-0000-0000-000000000001$/m)
+
+    const dash = await withStdin('ISA*00*...~', () => run(['partner', 'receive', 'ACME', '-']))
+    assert.equal(dash.error, undefined)
+    const bare = await withStdin('ISA*00*...~', () => run(['partner', 'receive', 'ACME']))
+    assert.equal(bare.error, undefined)
+    assert.match(bare.stdout, /aaaaaaaa-0000-0000-0000-000000000001/)
+  })
+
+  it('partner list renders the partner table', async () => {
+    const {stdout, error} = await run(['partner', 'list'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /KEY\s+NAME\s+CONNECTION\s+INBOUND\s+OUTBOUND\s+FLOWS/)
+    assert.match(stdout, /ACME\s+Acme Retail\s+Acme SFTP \(sftp\)\s+850\s+856,810\s+inbound active, outbound active/)
+  })
+
+  it('partner get shows the connection, envelopes, webhooks, sets with readiness, and flows', async () => {
+    const {stdout, error} = await run(['partner', 'get', 'acme'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Connection\s+Acme SFTP \(sftp\)/)
+    assert.match(stdout, /Host\s+sftp\.example\.invalid:22 as acme/)
+    assert.match(stdout, /theirs ZZ RECEIVERID/)
+    assert.match(stdout, /inbound https:\/\/example\.invalid\/hooks\/orders \(standard\)/)
+    assert.match(stdout, /850\s+inbound\s+mapping: Acme 850\s+yes/)
+    assert.match(stdout, /856\s+outbound\s+implementation: Acme 856\s+yes/)
+    assert.match(stdout, /810\s+outbound\s+-\s+no \(no mapping or implementation\)/)
+    assert.match(stdout, /inbound\s+active\s+Acme Inbound/)
+  })
+
+  it('partner get on an unknown key exits 1 and points at partner list', async () => {
+    const {error, exit} = await run(['partner', 'get', 'nope'])
+    assert.match(error?.message ?? '', /No partner 'nope' in your organization/)
+    assert.equal(exit, 1)
+  })
+
+  it('trace shows the transactions, results, feed, artifacts and logs', async () => {
+    const {stdout, error} = await run(['trace', 'aaaaaaaa-0000-0000-0000-000000000001'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Processing\s+no/)
+    assert.match(stdout, /mock-txn-1\s+inbound\s+850/)
+    assert.match(stdout, /EDI Endpoint\s+success\s+mock-result-1/)
+    assert.match(stdout, /inbound\s+success\s+ACME\s+mock-result-1/)
+    assert.match(stdout, /mock-artifact-1\s+input\s+EDI Endpoint/)
+    assert.match(stdout, /Logs:[\s\S]*Received document/)
+    const short = await run(['trace', 'aaaaaaaa-0000-0000-0000-000000000001', '--no-logs'])
+    assert.doesNotMatch(short.stdout, /Logs:/)
+  })
+
+  it('trace --json passes the wire shape through, and an unknown trace exits 1', async () => {
+    const {stdout} = await run(['trace', 'aaaaaaaa-0000-0000-0000-000000000001', '--json'])
+    const trace = JSON.parse(stdout)
+    assert.equal(trace.processing, false)
+    assert.equal(trace.ediTransactions[0].id, 'mock-txn-1')
+    const {exit} = await run(['trace', 'nope'])
+    assert.equal(exit, 1)
   })
 
   it('whoami reports the full identity', async () => {
     const {stdout, error} = await run(['whoami'])
     assert.equal(error, undefined)
     assert.match(stdout, /Acme EDI \(dev\) \(scope: standard, key 'Development key' \.\.\.1234\)/)
-  })
-
-  it('auth status reports scope and terms', async () => {
-    const {stdout, error} = await run(['auth', 'status'])
-    assert.equal(error, undefined)
-    assert.match(stdout, /Key scope:\s+standard/)
-    assert.match(stdout, /Terms:\s+accepted/)
   })
 })

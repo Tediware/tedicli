@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {afterEach, describe, it} from 'node:test'
 
-import changelogHook from '../src/hooks/postrun/changelog.js'
+import changelogHook, {readTargetVersion} from '../src/hooks/postrun/changelog.js'
 import {fetchChangelog, parseRepoSlug} from '../src/lib/changelog.js'
 
 const realFetch = globalThis.fetch
@@ -117,26 +117,21 @@ describe('changelog postrun hook', () => {
     assert.match(out, /From object repo/)
   })
 
-  it('passes --version through to fetch the matching tag', async () => {
+  it('passes the positional version through to fetch the matching tag', async () => {
     let requested = ''
     stubFetch((url) => {
       requested = url
       return {status: 200, body: {tag_name: '1.0.0', body: 'Pinned notes', html_url: 'https://gh/r'}}
     })
-    const out = (await runHook({Command: {id: 'update'}, argv: ['--version', '1.0.0'], config: stringRepoConfig})).join('\n')
+    const out = (await runHook({Command: {id: 'update'}, argv: ['1.0.0'], config: stringRepoConfig})).join('\n')
     assert.match(requested, /releases\/tags\/1\.0\.0$/)
     assert.match(out, /Pinned notes/)
   })
 
-  it('skips when nothing was installed (--available)', async () => {
-    let fetched = false
-    stubFetch(() => {
-      fetched = true
-      return {status: 200, body: {tag_name: 'v0.2.0'}}
-    })
-    const logs = await runHook({Command: {id: 'update'}, argv: ['--available'], config: stringRepoConfig})
-    assert.equal(fetched, false)
-    assert.equal(logs.length, 0)
+  it('does not mistake a global flag value for the target version', async () => {
+    assert.equal(readTargetVersion(['--profile', 'staging']), undefined)
+    assert.equal(readTargetVersion(['--profile', 'staging', '1.2.3']), '1.2.3')
+    assert.equal(readTargetVersion(['--no-color', '1.2.3']), '1.2.3')
   })
 
   it('skips when already on the latest version', async () => {

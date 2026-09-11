@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {mkdtemp, rm, writeFile} from 'node:fs/promises'
+import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
 import {Readable} from 'node:stream'
@@ -68,13 +68,27 @@ const found = (errors: number, notices = 0): Record<string, string> => ({
  * A 200 carries the findings headers unless the test says otherwise; a non-200
  * carries none, as the server sends none.
  */
-function stubFetch(response: {status?: number; body?: string; headers?: Record<string, string>} = {}): Sent[] {
+const IDENTITY = JSON.stringify({organization: {id: 'o', name: 'Acme'}, keyScope: 'standard', keyLabel: null, serviceTermsAccepted: true})
+
+/**
+ * The command validates the key with `whoami` before scrubbing, so the stub
+ * answers that with an identity (or the scripted `whoami` response) and only
+ * records the inspect uploads, which are what the assertions read.
+ */
+function stubFetch(
+  response: {status?: number; body?: string; headers?: Record<string, string>} = {},
+  whoami: {status?: number; body?: string} = {},
+): Sent[] {
   const sent: Sent[] = []
   const status = response.status ?? 200
   const headers = response.headers ?? (status === 200 ? CLEAN : undefined)
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input.toString()
+    if (url.endsWith('/platform/whoami')) {
+      return new Response(whoami.body ?? IDENTITY, {status: whoami.status ?? 200, headers: {'content-type': 'application/json'}})
+    }
     sent.push({
-      url: input.toString(),
+      url,
       method: init?.method ?? 'GET',
       body: typeof init?.body === 'string' ? JSON.parse(init.body) : {},
     })
@@ -130,6 +144,25 @@ describe('edi inspect', () => {
     assert.ok(uploaded.startsWith('ISA*00*'))
     assert.equal(uploaded.length, INTERCHANGE.length)
     assert.match(stderr, /Obfuscated \d+ values across \d+ segments before upload\./)
+    // The count line is printed on every run, with the exit reason.
+    assert.match(stderr, /0 errors, 0 notices\. Exit 0\./)
+  })
+
+  it('reads stdin when the file argument is omitted on a pipe, and -o writes the report', async () => {
+    const sent = stubFetch()
+    const out = join(dir, 'report.txt')
+    const realStdin = process.stdin
+    Object.defineProperty(process, 'stdin', {value: Readable.from([INTERCHANGE]), configurable: true})
+    try {
+      const {stdout, stderr, error} = await run(['edi', 'inspect', '-o', out])
+      assert.equal(error, undefined)
+      assert.equal(sent.length, 1)
+      assert.equal(stdout, '')
+      assert.match(stderr, /Wrote .*report\.txt/)
+      assert.equal(await readFile(out, 'utf8'), 'INSPECTION REPORT\n')
+    } finally {
+      Object.defineProperty(process, 'stdin', {value: realStdin, configurable: true})
+    }
   })
 
   it('--seed makes the uploaded replacements reproducible', async () => {
@@ -224,7 +257,7 @@ describe('edi inspect', () => {
       assert.equal(error, undefined)
       // The report is the point of the command: it prints either way.
       assert.match(stdout, /INSPECTION REPORT/)
-      assert.match(stderr, /3 errors, 1 notice/)
+      assert.match(stderr, /3 errors, 1 notice\. Exit 1 \(errors\)\./)
     })
 
     it('still exits 1 on findings when a check did not run, noting there may be more', async () => {
@@ -244,7 +277,9 @@ describe('edi inspect', () => {
       stubFetch({headers: found(0, 2)})
       const strict = await run(['edi', 'inspect', file, '--fail-on', 'notice'])
       assert.equal(strict.exit, 1)
-      assert.match(strict.stderr, /0 errors, 2 notices.*--fail-on notice/s)
+      assert.match(strict.stderr, /0 errors, 2 notices\. Exit 1 \(notices, with --fail-on notice\)/)
+      // A clean run says notices were seen and not counted.
+      assert.match(clean.stderr, /0 errors, 2 notices\. Exit 0\. Notices do not count/)
     })
 
     it('exits 2 when the server says a check did not run, however clean the report looks', async () => {
@@ -304,18 +339,26 @@ describe('edi inspect', () => {
       assert.match(error?.message ?? '', /Could not reach the Tediware API at http:\/\/127\.0\.0\.1:1 \(ECONNREFUSED\)/)
     })
 
-    it('exits 2 when the local scrub cannot read the file: inconclusive, not invalid', async () => {
-      // The scrub reads the envelope more strictly than the server's parser, so
-      // its refusal is not a verdict on the document — --no-obfuscate is the way
-      // forward, and `edi obfuscate` (where the scrub *is* the answer) exits 1.
+    it('exits 1 when the local scrub cannot read the file, keeping the --no-obfuscate hint', async () => {
+      // "Not an X12 interchange" is a finding about the file on every path, so
+      // an agent can key on 1 and retry with --no-obfuscate for the server's
+      // fuller diagnosis, which the suggestion names.
       const sent = stubFetch()
       const notEdi = join(dir, 'notes.txt')
       await writeFile(notEdi, 'just some text', 'utf8')
 
       const {error, exit} = await run(['edi', 'inspect', notEdi])
-      assert.equal(exit, 2)
+      assert.equal(exit, 1)
       assert.equal(sent.length, 0)
       assert.ok(error?.message.includes("doesn't look like an X12 interchange"))
+      assert.match((error as {suggestions?: string[]}).suggestions?.join(' ') ?? '', /--no-obfuscate/)
+    })
+
+    it('exits 1 for an empty file: nothing there is an interchange', async () => {
+      const empty = join(dir, 'empty.edi')
+      await writeFile(empty, '', 'utf8')
+      const {exit} = await run(['edi', 'inspect', empty])
+      assert.equal(exit, 1)
     })
   })
 
@@ -358,17 +401,84 @@ describe('edi inspect', () => {
     assert.equal(sent.length, 0)
   })
 
-  it('fails clearly when the file does not exist', async () => {
-    const sent = stubFetch()
-    const {error} = await run(['edi', 'inspect', join(dir, 'nope.edi')])
-    assert.match(error?.message ?? '', /File not found/)
+  it('validates the key with the server before scrubbing, so a rejected key never follows the scrub notice', async () => {
+    const sent = stubFetch({}, {status: 401, body: JSON.stringify({error: 'Invalid API key'})})
+    const {error, stderr, exit} = await run(['edi', 'inspect', file])
+    assert.match(error?.message ?? '', /API key was rejected/)
+    assert.equal(exit, 2)
+    assert.doesNotMatch(stderr, /before upload/)
     assert.equal(sent.length, 0)
   })
 
-  it('rejects --json with an explanation rather than a flat flag error', async () => {
+  it('still inspects against a server with no identity endpoint', async () => {
+    const sent = stubFetch({}, {status: 404, body: JSON.stringify({error: {message: 'No such endpoint', code: 'no_route'}})})
+    const {error} = await run(['edi', 'inspect', file])
+    assert.equal(error, undefined)
+    assert.equal(sent.length, 1)
+  })
+
+  it('fails clearly when the file does not exist', async () => {
+    const sent = stubFetch()
+    const {error, exit} = await run(['edi', 'inspect', join(dir, 'nope.edi')])
+    assert.match(error?.message ?? '', /Cannot read .*nope\.edi: no such file or directory/)
+    assert.equal(exit, 2)
+    assert.equal(sent.length, 0)
+  })
+
+  it('rejects --json with the one no-JSON wording rather than a flat flag error', async () => {
     stubFetch()
     const {error} = await run(['edi', 'inspect', file, '--json'])
-    assert.match(error?.message ?? '', /JSON is not offered/)
+    assert.match(error?.message ?? '', /--json is not offered here: inspection reports/)
+  })
+
+  it('uploads a UTF-8 file as the same characters, not mojibake', async () => {
+    const sent = stubFetch()
+    const utf8 = join(dir, 'utf8.edi')
+    await writeFile(utf8, INTERCHANGE.replace('DOE*JANE*Q', 'DOE*JANE*Q').replace('ISA*00*          *00*          *ZZ*SENDERID12345  ', 'ISA*00*          *00*          *ZZ*S\u00c9NDERID1234  '), 'utf8')
+    await run(['edi', 'inspect', utf8, '--no-obfuscate'])
+    assert.ok(sent[0].body.edi_content.includes('S\u00c9NDERID1234'))
+    assert.ok(!sent[0].body.edi_content.includes('\u00c3'))
+  })
+
+  it('asks for no color when the report goes to a file, even on a terminal', async () => {
+    const sent = stubFetch()
+    const out = join(dir, 'report.txt')
+    const realIsTty = process.stdout.isTTY
+    Object.defineProperty(process.stdout, 'isTTY', {value: true, configurable: true})
+    try {
+      await run(['edi', 'inspect', file, '-o', out])
+      assert.equal(sent[0].body.color, undefined)
+      await run(['edi', 'inspect', file, '-o', out, '--color'])
+      assert.equal(sent[1].body.color, true)
+    } finally {
+      Object.defineProperty(process.stdout, 'isTTY', {value: realIsTty, configurable: true})
+    }
+  })
+
+  it('--scrub-parties and --scrub-text shape the upload', async () => {
+    const po = join(dir, 'po.edi')
+    await writeFile(
+      po,
+      [
+        'ISA*00*          *00*          *ZZ*SENDERID12345  *ZZ*RECEIVERID1234 *240101*1200*>*00501*000000001*0*T*:',
+        'GS*PO*SENDERID*RECEIVERID*20240101*1200*1*X*005010',
+        'ST*850*0001',
+        'MSG*NET 30',
+        'N1*ST*JOHN Q SMITH',
+        'SE*3*0001',
+        'GE*1*1',
+        'IEA*1*000000001',
+      ].join('~\n'),
+      'utf8',
+    )
+    let sent = stubFetch()
+    await run(['edi', 'inspect', po])
+    assert.ok(sent[0].body.edi_content.includes('JOHN Q SMITH'))
+    assert.ok(sent[0].body.edi_content.includes('NET 30'))
+    sent = stubFetch()
+    await run(['edi', 'inspect', po, '--scrub-parties', '--scrub-text'])
+    assert.ok(!sent[0].body.edi_content.includes('JOHN Q SMITH'))
+    assert.ok(!sent[0].body.edi_content.includes('NET 30'))
   })
 
   it('rejects --seed with --no-obfuscate (it would have no effect)', async () => {

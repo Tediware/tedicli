@@ -166,7 +166,8 @@ describe('useMock', () => {
 describe('JsonNotSupportedError', () => {
   it('carries the educational message', () => {
     const err = new JsonNotSupportedError()
-    assert.match(err.message, /--format console/)
+    assert.match(err.message, /--json is not offered here/)
     assert.match(err.message, /licensed X12 reference data/)
+    assert.ok(err.suggestions.some((s) => s.includes('--format console')))
   })
 })

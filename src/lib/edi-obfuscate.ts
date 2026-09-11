@@ -1,6 +1,6 @@
 /**
- * Local X12 PII obfuscation. Runs entirely client-side — the file never leaves
- * the machine — so it can be scrubbed before sharing it or before opting into
+ * Local X12 PII obfuscation. Runs entirely client-side (the file never leaves
+ * the machine), so it can be scrubbed before sharing it or before opting into
  * server-backed features.
  *
  * Strategy (see the command help for the user-facing summary):
@@ -53,7 +53,7 @@ export class NotAnInterchangeError extends TediError {
 }
 
 /**
- * Raised when the file's own ISA header is the wrong shape — typically a dropped
+ * Raised when the file's own ISA header is the wrong shape, typically a dropped
  * or extra element separator.
  *
  * Deliberately distinct from {@link DifferentDelimitersError}: that one is about
@@ -104,8 +104,21 @@ export class DifferentDelimitersError extends TediError {
 }
 
 export interface ObfuscateOptions {
-  /** Seed for reproducible output. Omitted → a fresh random key per run. */
+  /** Seed for reproducible output. Omitted or empty: a fresh random key per run. */
   seed?: string
+  /**
+   * Treat every N1 ship-to (ST) and bill-to (BT) party as a person: scrub the
+   * name and, with it, the N3, N4 and PER that follow. For drop-ship purchase
+   * orders and shipments, where the "party" is a consumer.
+   */
+  scrubParties?: boolean
+  /**
+   * Scrub free text (MSG, MTX, NTE, K3) even when the interchange carries no
+   * person-class segment. Free text is kept by default on supply-chain
+   * documents, where it is terms and instructions, and scrubbed by default on
+   * healthcare ones, where it is narrative about a patient.
+   */
+  scrubText?: boolean
 }
 
 export interface ObfuscateResult {
@@ -153,7 +166,7 @@ function isValidDate8(value: string): boolean {
 
 /**
  * Format-preserving value substitutor. Replacements are a pure function of
- * (key, value), which is what makes the mapping consistent across the run —
+ * (key, value), which is what makes the mapping consistent across the run,
  * and what makes the memo cache sound.
  */
 class Substitutor {
@@ -225,7 +238,7 @@ class Substitutor {
       const [from = '', to = ''] = value.split('-')
       let [newFrom, newTo] = [this.date8(from), this.date8(to)]
       // A range is one value, so its validity includes the two endpoints being
-      // in order — and scrubbing each half independently reorders roughly half
+      // in order, and scrubbing each half independently reorders roughly half
       // of all same-year ranges. (Different years cannot reorder: years are
       // kept.) Restore the original ordering by swapping, but only when both
       // halves are equally valid, so a swap can never move a fault from one
@@ -247,7 +260,7 @@ class Substitutor {
    * violated the standard still violates it after the scrub. Dates are the
    * exception: this rule constructs a month and a day rather than substituting
    * their digits, so it has to choose what to construct. Emitting a real date
-   * for an impossible one would repair the file — the scrubbed copy would pass
+   * for an impossible one would repair the file: the scrubbed copy would pass
    * a check the original fails, and whoever receives it could not reproduce the
    * problem. So an out-of-range month or day is replaced by a different
    * out-of-range one, and `00` stays `00`, which is its own kind of invalid.
@@ -261,7 +274,7 @@ class Substitutor {
       String(from + ((digest[index] ?? 0) % count)).padStart(2, '0')
 
     const monthOk = month >= 1 && month <= 12
-    // Judge the day against the original month and year — Feb 29 is invalid in a
+    // Judge the day against the original month and year: Feb 29 is invalid in a
     // non-leap year. When the month itself is out of range there is nothing to
     // judge against, so accept any day a month could have; marking it invalid
     // too would add a finding the original file did not have.
@@ -292,7 +305,7 @@ interface Delimiters {
  * Read the delimiters out of the fixed-width ISA header. The element separator
  * is the 4th character; ISA16 (component separator) is the character after the
  * 16th separator; the segment terminator follows it. ISA11 is the repetition
- * separator from 00402 on — recognizable because it is non-alphanumeric (in
+ * separator from 00402 on, recognizable because it is non-alphanumeric (in
  * 00401 the same position holds the standards ID "U").
  */
 function readDelimiters(input: string, isaStart: number): Delimiters {
@@ -326,7 +339,7 @@ function readDelimiters(input: string, isaStart: number): Delimiters {
   // This has to fail loudly, because carrying on fails *silently*. Tokenizing
   // the file against the wrong terminator means no chunk retains an `ISA` id, so
   // the guard in transformSegment never matches, no scrub rule ever fires, and
-  // the run reports success while handing back the file with its PII intact —
+  // the run reports success while handing back the file with its PII intact,
   // which `edi inspect` would then upload.
   for (const [what, char] of [
     ['element separator', delims.element],
@@ -343,7 +356,22 @@ function readDelimiters(input: string, isaStart: number): Delimiters {
   return delims
 }
 
-type ElementRule = (e: string[], sub: Substitutor) => void
+/**
+ * What the rules know about where they are. Addresses follow the party: an N3
+ * or N4 is scrubbed only under a party that was itself scrubbed, so a ship-to
+ * warehouse keeps its street while a patient loses theirs. Free text follows
+ * the document family.
+ */
+interface ScrubContext {
+  /** The most recent NM1 or N1 named a person (or was treated as one). */
+  partyIsPerson: boolean
+  /** Whether free-text segments are scrubbed on this run. */
+  scrubText: boolean
+  /** Whether N1 ST and BT parties are treated as persons on this run. */
+  scrubParties: boolean
+}
+
+type ElementRule = (e: string[], sub: Substitutor, ctx: ScrubContext) => void
 
 /** Rule that substitutes the elements at the given positions, when present. */
 const scrub =
@@ -363,45 +391,72 @@ const scrubDate =
     if (value) e[index] = sub.date(value)
   }
 
+/** Rule that applies only under a person party. */
+const underPerson =
+  (rule: ElementRule): ElementRule =>
+  (e, sub, ctx) => {
+    if (ctx.partyIsPerson) rule(e, sub, ctx)
+  }
+
+/** Rule that applies only when free text is being scrubbed. */
+const freeText =
+  (rule: ElementRule): ElementRule =>
+  (e, sub, ctx) => {
+    if (ctx.scrubText) rule(e, sub, ctx)
+  }
+
 const PERSON_NAME_ELEMENTS = scrub(3, 4, 5, 6, 7)
 const PERSON_ID_ELEMENT = scrub(9)
 const SENSITIVE_REF_ELEMENTS = scrub(2, 3)
 
+/** N101 codes `--scrub-parties` treats as a person: ship-to and bill-to. */
+const CONSUMER_PARTY_CODES = new Set(['ST', 'BT'])
+
 /**
- * The positional PII map. Scope is personal PII: names of persons, street
- * addresses, city/ZIP, DOB, contact info, member/SSN-class identifiers,
- * patient account numbers, bank account/routing data, and free text.
- * Business identifiers (ISA06/08 routing IDs, org names, NPIs, tax IDs) and
- * everything structural (qualifiers, codes, dates of service, amounts,
- * control numbers) are deliberately preserved.
+ * The positional PII map. Scope is personal PII: names of persons, the
+ * addresses under them, DOB, contact info, member/SSN-class identifiers,
+ * patient account numbers, bank account/routing data, and (on healthcare
+ * documents) free text. Business identifiers (ISA06/08 routing IDs, org names
+ * and their addresses, NPIs, tax IDs) and everything structural (qualifiers,
+ * codes, dates of service, amounts, control numbers) are deliberately
+ * preserved.
  */
 const SEGMENT_RULES: Record<string, ElementRule> = {
-  // ISA02/ISA04: authorization/security information — occasionally holds real
-  // credentials. All-blank values pass through unchanged (spaces are kept), so
-  // the fixed 10-char widths survive either way.
+  // ISA02/ISA04: authorization/security information, which occasionally holds
+  // real credentials. All-blank values pass through unchanged (spaces are
+  // kept), so the fixed 10-char widths survive either way.
   ISA: scrub(2, 4),
   // Person names (NM102=1) and person-class identifiers. Org names (NM102=2)
   // and business identifiers (XX=NPI, FI, PI, 46...) are kept.
-  NM1(e, sub) {
-    if (e[2] === '1') PERSON_NAME_ELEMENTS(e, sub)
+  NM1(e, sub, ctx) {
+    ctx.partyIsPerson = e[2] === '1'
+    if (ctx.partyIsPerson) PERSON_NAME_ELEMENTS(e, sub, ctx)
     const qualifier = e[8]
-    if (qualifier && PERSONAL_ID_QUALIFIERS.has(qualifier)) PERSON_ID_ELEMENT(e, sub)
+    if (qualifier && PERSONAL_ID_QUALIFIERS.has(qualifier)) PERSON_ID_ELEMENT(e, sub, ctx)
   },
-  N3: scrub(1, 2),
+  // N1 names are organizations and kept, unless --scrub-parties says the
+  // ship-to or bill-to is a consumer, in which case the name goes with the
+  // address and contact that follow.
+  N1(e, sub, ctx) {
+    ctx.partyIsPerson = ctx.scrubParties && CONSUMER_PARTY_CODES.has(e[1] ?? '')
+    if (ctx.partyIsPerson) scrub(2)(e, sub, ctx)
+  },
+  N3: underPerson(scrub(1, 2)),
   // City and ZIP; state and country codes stay (state-level geography is not PII).
-  N4(e, sub) {
+  N4: underPerson((e, sub) => {
     const city = e[1]
     if (city) e[1] = sub.substitute(city)
     const zip = e[3]
     if (zip) e[3] = sub.zip(zip)
-  },
+  }),
   // Date of birth: keep the year, scrub month/day.
   DMG: scrubDate(2),
-  // Contact name and communication numbers (phone/fax/email/URL).
+  // Contact name and communication numbers (phone/fax/email/URL). A contact is
+  // a person whichever party they work for.
   PER: scrub(2, 4, 6, 8),
-  REF(e, sub) {
+  REF(e, sub, ctx) {
     const qualifier = e[1]
-    if (qualifier && SENSITIVE_REF_QUALIFIERS.has(qualifier)) SENSITIVE_REF_ELEMENTS(e, sub)
+    if (qualifier && SENSITIVE_REF_QUALIFIERS.has(qualifier)) SENSITIVE_REF_ELEMENTS(e, sub, ctx)
   },
   // Patient account numbers (Safe Harbor account-number class).
   CLM: scrub(1),
@@ -410,12 +465,25 @@ const SEGMENT_RULES: Record<string, ElementRule> = {
   PAT: scrubDate(6),
   // Bank routing (07/13) and account (09/15) numbers in payment order/remittance.
   BPR: scrub(7, 9, 13, 15),
-  // CR109/CR110: ambulance round-trip/stretcher purpose — free-text narratives.
+  // CR109/CR110: ambulance round-trip/stretcher purpose, free-text narratives.
   CR1: scrub(9, 10),
-  // Free text can contain anything (names, phones, narratives): scrub wholesale.
-  NTE: scrub(2),
-  MSG: scrub(1),
-  K3: scrub(1),
+  // Free text can contain anything (names, phones, narratives). Scrubbed on
+  // healthcare documents and under --scrub-text; kept on supply-chain ones,
+  // where it is terms and instructions the reader needs. MSG and MTX are the
+  // same segment in different releases.
+  NTE: freeText(scrub(2)),
+  MSG: freeText(scrub(1)),
+  MTX: freeText(scrub(2, 3)),
+  K3: freeText(scrub(1)),
+}
+
+/**
+ * Whether the interchange carries a person-class segment: an NM1 naming a
+ * person, a DMG (demographics) or a CLM (claim). That is the healthcare
+ * signal, and it is what turns free-text scrubbing on by default.
+ */
+function carriesPersonClassSegments(segments: string[][]): boolean {
+  return segments.some(([id, , nm102]) => id === 'DMG' || id === 'CLM' || (id === 'NM1' && nm102 === '1'))
 }
 
 function leadingWhitespace(s: string): string {
@@ -428,15 +496,23 @@ function leadingWhitespace(s: string): string {
  * commands report a scrub identically.
  */
 export function describeObfuscation({segmentCount, valuesObfuscated}: ObfuscateResult): string {
-  return `Obfuscated ${valuesObfuscated} value${valuesObfuscated === 1 ? '' : 's'} across ${segmentCount} segments`
+  const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`
+  return `Obfuscated ${plural(valuesObfuscated, 'value')} across ${plural(segmentCount, 'segment')}`
 }
+
+/**
+ * A UTF-8 byte-order mark, as it reads after a latin1 decode (the encoding the
+ * commands read EDI with) and as a real code point (when the string came from
+ * elsewhere). Either is bytes ahead of the ISA.
+ */
+const BOM_FORMS = ['\u00EF\u00BB\u00BF', '\uFEFF']
 
 /** Obfuscate personal PII in a full X12 interchange, preserving structure exactly. */
 export function obfuscateInterchange(input: string, opts: ObfuscateOptions = {}): ObfuscateResult {
   // A byte-order mark is tolerated when reading, but it is also bytes ahead of
-  // the ISA \u2014 a framing fault a partner (or `edi inspect`) may well report. It
+  // the ISA, a framing fault a partner (or `edi inspect`) may well report. It
   // is put back on the way out so the scrub does not quietly fix the file.
-  const bom = input.startsWith('\uFEFF') ? '\uFEFF' : ''
+  const bom = BOM_FORMS.find((form) => input.startsWith(form)) ?? ''
   const body = input.slice(bom.length)
   const isaStart = leadingWhitespace(body).length
   if (!body.startsWith('ISA', isaStart)) {
@@ -444,8 +520,10 @@ export function obfuscateInterchange(input: string, opts: ObfuscateOptions = {})
   }
 
   const delims = readDelimiters(body, isaStart)
+  // An empty seed is what `--seed "$SEED"` produces when the variable is unset;
+  // it means "no seed", not "the empty string as a seed".
   const sub = new Substitutor(
-    opts.seed,
+    opts.seed || undefined,
     [delims.element, delims.component, delims.segment, delims.repetition ?? ''].filter(Boolean),
   )
 
@@ -473,26 +551,29 @@ export function obfuscateInterchange(input: string, opts: ObfuscateOptions = {})
       if (!wellFormed) {
         // One file can carry several ISA..IEA interchanges, each declaring its
         // own delimiters. A later ISA that doesn't line up cannot be diagnosed
-        // from here — its own separators leave it unsplittable by the first
+        // from here, since its own separators leave it unsplittable by the first
         // one's, which looks the same whether it changed delimiters or is simply
-        // malformed — so the error says only what is certain.
+        // malformed, so the error says only what is certain.
         if (interchanges > 1) throw new DifferentDelimitersError()
         // The first ISA is the one `delims` was read from, so a fault here is
         // the header's own, and "split the file" would be unactionable advice.
-        // (`id` is necessarily "ISA" at this point — the element separator is by
-        // definition the character at offset 3 — so only the shape can be wrong.)
+        // (`id` is necessarily "ISA" at this point, since the element separator is by
+        // definition the character at offset 3, so only the shape can be wrong.)
         throw new MalformedIsaError()
       }
     }
 
+    // A new transaction set starts with no party in scope.
+    if (id === 'ST') ctx.partyIsPerson = false
+
     const before = elements.slice()
-    SEGMENT_RULES[id]?.(elements, sub)
+    SEGMENT_RULES[id]?.(elements, sub, ctx)
 
     // Fallback pattern layer: SSNs and emails that leak into elements the
     // positional rules don't cover. Checked per component/repeat so composite
     // elements are handled; everything else is left alone (a blanket numeric
     // scrub would corrupt counts, amounts, and codes). Elements a positional
-    // rule already replaced are skipped — re-substituting them would give the
+    // rule already replaced are skipped, because re-substituting them would give the
     // same original value different replacements in different segments.
     for (let i = 1; i < elements.length; i++) {
       const value = elements[i] ?? ''
@@ -518,10 +599,21 @@ export function obfuscateInterchange(input: string, opts: ObfuscateOptions = {})
   // segment's final element and pass through substitution unchanged, keeping
   // the same-bytes-same-replacement guarantee exact.
   const chunks = body.split(delims.segment)
+
+  // The free-text policy depends on the whole document, so the segments are
+  // looked at once before any is transformed.
+  const ctx: ScrubContext = {
+    partyIsPerson: false,
+    scrubParties: Boolean(opts.scrubParties),
+    scrubText:
+      Boolean(opts.scrubText) ||
+      carriesPersonClassSegments(chunks.map((chunk) => chunk.trimStart().split(delims.element))),
+  }
+
   const out = chunks.map((chunk) => {
     const leading = leadingWhitespace(chunk)
     const content = chunk.slice(leading.length)
-    // The final chunk is whatever follows the last terminator — usually empty
+    // The final chunk is whatever follows the last terminator, usually empty
     // or a newline; it is transformed too if it holds an unterminated segment.
     if (content === '') return chunk
     return leading + transformSegment(content)

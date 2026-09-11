@@ -2,7 +2,9 @@ import {BaseCommand} from '../../base-command.js'
 import {API_KEY_ENV} from '../../lib/credentials.js'
 
 export default class AuthLogout extends BaseCommand<typeof AuthLogout> {
-  static description = 'Clear stored Tediware credentials.'
+  static summary = 'Clear stored Tediware credentials.'
+
+  static description = 'Local. Nothing is sent.'
 
   static examples = ['<%= config.bin %> auth logout']
 

@@ -1,12 +1,14 @@
 import {Args} from '@oclif/core'
 
-import {X12Command} from '../../x12-base-command.js'
+import {SERVER_LOOKUP, X12Command} from '../../x12-base-command.js'
 
 export default class X12Txn extends X12Command<typeof X12Txn> {
   // `transaction` keeps working but stays out of the help listing; `txn` is canonical.
   static hiddenAliases = ['x12:transaction']
 
-  static description = 'Look up an X12 transaction set and its loop structure (e.g. 856).'
+  static summary = 'Look up an X12 transaction set and its loop structure (e.g. 856).'
+
+  static description = SERVER_LOOKUP
 
   static examples = ['<%= config.bin %> x12 txn 856', '<%= config.bin %> x12 txn SH856 -r 005010']
 
@@ -19,10 +21,10 @@ export default class X12Txn extends X12Command<typeof X12Txn> {
   }
 
   async run(): Promise<void> {
+    const id = this.referenceId(this.args.id, 'transaction set code')
     const req = await this.referenceRequest()
     const client = await this.getAuthedClient()
-    // Accept any case; functional-group forms like sh856 normalize to SH856.
-    const doc = await client.x12Transaction(this.args.id.toUpperCase(), req)
+    const doc = await client.x12Transaction(id, req)
     this.printReference(doc)
   }
 }

@@ -1,34 +1,58 @@
 import {BaseCommand} from '../../base-command.js'
 import {API_KEY_ENV} from '../../lib/credentials.js'
-import {IdentityUnavailableError} from '../../lib/errors.js'
+import {EXIT_UNUSABLE, IdentityUnavailableError, TediError} from '../../lib/errors.js'
+
+interface CredentialStatus {
+  signedIn: true
+  source: 'stored' | 'env'
+  keyLabel: string | null
+  keyHint: string
+  configDir: string
+}
 
 export default class AuthStatus extends BaseCommand<typeof AuthStatus> {
-  static description = 'Report whether you are signed in and, if so, the authenticated identity.'
+  static enableJsonFlag = true
 
-  static examples = ['<%= config.bin %> auth status']
+  static summary = 'Report the credential in use: signed in or not, where the key came from, its label.'
 
-  async run(): Promise<void> {
+  static description = `Talks to the Tediware server to read the key's label. For the identity behind the key (organization, scope, terms), run \`tedi whoami\`.
+
+Exits 2 when not signed in, so a script can gate on it.`
+
+  static examples = ['<%= config.bin %> auth status', '<%= config.bin %> auth status --json']
+
+  async run(): Promise<CredentialStatus> {
     const cred = await this.resolveCredentials()
     if (!cred) {
-      this.log('Not signed in. Run `tedi auth login` to authenticate.')
-      return
+      throw new TediError('Not signed in.', {
+        suggestions: ['Run `tedi auth login`, or set TEDI_API_KEY in your environment.'],
+        exitCode: EXIT_UNUSABLE,
+      })
     }
 
     const client = await this.getAuthedClient()
-    const via = cred.source === 'env' ? ` (from ${API_KEY_ENV})` : ''
+    let keyLabel: string | null = null
     try {
-      const id = await client.whoami()
-      this.log('Signed in.')
-      this.log(`  Organization: ${id.organization}`)
-      this.log(`  Key scope:    ${id.keyScope}`)
-      this.log(`  Key:          ${id.keyLabel ?? '(unnamed)'} ...${id.keyHint}${via}`)
-      this.log(`  Terms:        ${id.termsAccepted ? 'accepted' : 'NOT accepted — reference and inspection will be refused'}`)
+      keyLabel = (await client.whoami()).keyLabel
     } catch (err) {
-      // A server without the identity endpoint: still confirm a key is present,
-      // using the locally-known token for the hint, rather than failing outright.
+      // A server without the identity endpoint: the credential is still known
+      // locally, so report it without a label rather than failing.
       if (!(err instanceof IdentityUnavailableError)) throw err
-      this.log(`Signed in (key ...${cred.token.slice(-4)})${via}.`)
-      this.log('This server does not report identity; run `tedi x12 seg ISA` to verify the key works.')
     }
+
+    const status: CredentialStatus = {
+      signedIn: true,
+      source: cred.source,
+      keyLabel,
+      keyHint: cred.token.slice(-4),
+      configDir: this.configDir,
+    }
+
+    this.log('Signed in.')
+    this.log(`  Key:        ${keyLabel ?? '(unnamed)'} ...${status.keyHint}`)
+    this.log(`  Source:     ${cred.source === 'env' ? API_KEY_ENV : 'stored'}`)
+    this.log(`  Config dir: ${status.configDir}`)
+    this.log('Run `tedi whoami` for the organization, scope and terms behind the key.')
+    return status
   }
 }

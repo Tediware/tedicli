@@ -15,6 +15,10 @@ the commands return; `tedi <command> --help` describes each command.
   is of unknown provenance.
 - A sandbox key answers `whoami` but is refused by the org-wide data commands
   and by `tedi mcp serve`. The refusal names the reason.
+- `tedi auth status` says whether a key is present and where it came from
+  (stored or `TEDI_API_KEY`); it exits 2 when none is.
+- `--profile <name>` selects a config and credential set under
+  `~/.tedi-profiles/<name>`, for switching servers.
 
 ## Exit codes
 
@@ -27,13 +31,20 @@ Every command uses the same three-way split. Branch on it.
 ```
 
 `2` is never a pass. It covers a mistyped flag, no key, rate limiting, a server
-fault, a network failure, a server too old to know an endpoint, and an
-inspection the server reports as incomplete. A data-plane `404` is exit `1`
-("not found") only when the server says so in the body; a bare routing `404`
-exits `2`, so a stale server cannot tell you that an existing record is missing.
+fault, a network failure, a server too old to know an endpoint, an inspection
+the server reports as incomplete, and anything unanticipated (one line, no
+stack). A data-plane `404` is exit `1` ("not found") only when the server says
+so in the body; a `404` without the platform's JSON shape is "no such endpoint"
+and exits `2`, so a wrong `api.baseUrl` cannot tell you that an existing record
+is missing. "Not an X12 interchange" is exit `1` on every path.
 
-`edi inspect` writes a one-line finding count to stderr regardless of where
-stdout goes, so a redirected report still explains its exit code.
+Under `--json`, an error is JSON on stdout in one shape:
+`{"error": {"message", "code", "suggestions", "exitCode"}}`, with the server's
+`code` carried through when the failure was its refusal. Parse one thing.
+
+`edi inspect` writes a one-line finding count with the exit reason to stderr on
+every run, regardless of where stdout goes, so a redirected report still
+explains its exit code.
 
 ## Local versus networked
 
@@ -42,11 +53,12 @@ stdout goes, so a redirected report still explains its exit code.
 | `edi obfuscate`                             | Local. No key. Nothing sent.      |
 | `edi inspect`                               | Uploads the file (scrubbed first by default). |
 | `x12 *`                                     | Server lookup.                    |
-| `transaction`, `result`, `feed`, `artifact` | Server, your organization's data. |
-| `partner send`, `partner receive`           | Server, and the document is delivered or processed. |
+| `transaction`, `result`, `feed`, `artifact`, `trace`, `partner list`, `partner get` | Server, your organization's data. |
+| `partner send`, `partner receive`, `transaction resend` | Server, and the document is delivered or processed. |
 | `mcp serve`                                 | Forwards to the server. No tool logic locally. |
+| `config`, `auth logout`                     | Local. Nothing is sent.           |
 
-Each command's `--help` states this too.
+The first line of each command's `--help` states this too.
 
 ## Scrub before anything leaves the machine
 
@@ -60,8 +72,11 @@ then work with `clean.edi` everywhere: pasting into a ticket, sending to a
 partner for debugging, or reading it into your own context. The scrub is
 format-preserving (delimiters, lengths, control numbers, code values and
 business identifiers survive) and it preserves faults, so the scrubbed file
-still reproduces the problem. `edi inspect` runs the same scrub by default
-before uploading; `--no-obfuscate` sends the file verbatim.
+still reproduces the problem. Its defaults follow the document family:
+healthcare documents scrub fully; supply-chain ones keep business parties,
+their addresses and free text. `--scrub-parties` (drop-ship consumers in N1
+ST/BT) and `--scrub-text` move the line. `edi inspect` runs the same scrub by
+default before uploading; `--no-obfuscate` sends the file verbatim.
 
 The scrub is best-effort, not a certified de-identification. Free-text
 segments deserve a look before sharing.
@@ -69,9 +84,12 @@ segments deserve a look before sharing.
 ## Output
 
 - `--json` is offered on every command that returns your own organization's
-  data (`transaction`, `result`, `feed`, `artifact get` excepted since its
-  payload is raw bytes, `partner`, `whoami`). `feed list --follow --json`
-  emits JSONL, one entry per line, since the stream never ends.
+  data (`transaction`, `result`, `feed`, `trace`, `partner`, `whoami`, and
+  `artifact get` excepted since its payload is raw bytes) and on the local
+  state commands (`config`, `auth status`) and `x12 releases`. It prints the
+  server's response unchanged: lists are `{<collection>: [...], pagination:
+  {hasMore, nextCursor}}`. `feed list --follow --json` emits JSONL, one entry
+  per line, since the stream never ends.
 - `--json` is not offered on `x12` or `edi inspect`. The X12 standard is
   licensed and served as presentation only: `--format console` (default) or
   `--format markdown`. Passing `--json` there prints an explanation and exits
@@ -79,8 +97,11 @@ segments deserve a look before sharing.
   behave the same way and return the same rendered page.
 - Color and interactive truncation switch off when stdout is not a terminal, so
   piped output is complete and clean. `NO_COLOR` and `--no-color` also work.
-- `-` reads stdin where a file is expected; `-o <path>` writes a file instead
-  of stdout.
+- `-` reads stdin where a file is expected, and so does omitting the file on a
+  pipe; `-o <path>` writes a file instead of stdout, and `-o -` is stdout.
+- Direction is `inbound|outbound` everywhere; `--set` is a transaction set;
+  `--since` takes an ISO 8601 timestamp with a zone, a bare date, or `30m`,
+  `2h`, `3d`. Timestamps print as `YYYY-MM-DD HH:MM:SSZ`.
 
 ## Pipeline
 
@@ -96,11 +117,20 @@ case $? in
 esac
 ```
 
+Submitting a document and following it. Every receipt ends with the one
+command to run next:
+
+```bash
+tedi partner get ACME                          # which sets it takes, and whether each is ready
+tedi partner send ACME 856 shipment.json --wait   # exit 0 delivered, 1 on an error (printed), 2 on timeout
+tedi trace <guid>                              # everything on the trace; poll until Processing is no
+```
+
 Diagnosing a transaction that went wrong:
 
 ```bash
-tedi transaction get <id> --json      # envelope, status, artifacts on the trace
-tedi transaction logs <id>            # the trace's processing logs, oldest first
+tedi transaction get <id> --json      # envelope, status, acknowledgment, its own artifacts
+tedi transaction logs --trace <guid>  # the trace's processing logs, oldest first
 tedi artifact get <artifact-id> -o document.edi
 ```
 

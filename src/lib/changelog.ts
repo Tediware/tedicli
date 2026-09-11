@@ -3,7 +3,7 @@
  *
  * Best-effort and non-fatal: any failure (offline, no release for the version,
  * rate limit) returns undefined so the update flow is never blocked by changelog
- * fetching. The changelog is a marketing surface — platform highlights can ride
+ * fetching. The changelog is a marketing surface: platform highlights can ride
  * along with CLI changes in the release body.
  */
 
@@ -32,7 +32,7 @@ export function parseRepoSlug(repositoryUrl: string | undefined): string | undef
 
 /**
  * Fetch a release for a repo: the specific tag when `version` is given (no
- * fallback — a missing tag yields undefined rather than a mislabeled release),
+ * fallback; a missing tag yields undefined rather than a mislabeled release),
  * otherwise the latest published release.
  */
 export async function fetchChangelog(
@@ -45,7 +45,7 @@ export async function fetchChangelog(
   // npm versions are unprefixed (1.2.3) but GitHub release tags are usually
   // v-prefixed (v1.2.3). Try the given form and the toggled-prefix form so a
   // specific-version update still finds its notes. This only varies the tag
-  // spelling for the SAME version — it never falls back to a different release.
+  // spelling for the SAME version; it never falls back to a different release.
   const v = opts.version
   const candidates = v.startsWith('v') ? [v, v.slice(1)] : [v, `v${v}`]
   for (const tag of candidates) {

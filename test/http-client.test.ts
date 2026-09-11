@@ -9,11 +9,13 @@ import {
   EXIT_UNUSABLE,
   InspectionUnavailableError,
   InvalidApiKeyError,
+  NoSuchEndpointError,
   NotAuthenticatedError,
   NotFoundError,
   RateLimitedError,
   TediError,
   TermsNotAcceptedError,
+  UnknownReleaseError,
   UnreadableDocumentError,
   UnsupportedReleaseError,
 } from '../src/lib/errors.js'
@@ -76,17 +78,38 @@ describe('HttpApiClient', () => {
         }),
       }))
       const releases = await client('sk-test').x12Releases()
-      assert.deepEqual(releases, [
-        {code: '005010', name: null, hipaa: true},
-        {code: '004010', name: 'Release 004010', hipaa: false},
-      ])
+      // The wire shape is the shape: `--json` prints this unchanged.
+      assert.deepEqual(releases, {
+        data: {
+          releases: [
+            {id: 10, code: '005010', name: null, hipaa: true, published_at: null},
+            {id: 9, code: '004010', name: 'Release 004010', hipaa: false, published_at: null},
+          ],
+        },
+      })
       assert.equal(calls[0].url, 'http://localhost:5004/api/x12/releases')
       assert.equal(calls[0].headers.authorization, 'Key sk-test')
     })
 
-    it('returns an empty list when the envelope has no releases', async () => {
+    it('treats an envelope with no release list as a contract violation, not an empty list', async () => {
       stubFetch(() => ({body: JSON.stringify({data: {}})}))
-      assert.deepEqual(await client('sk-test').x12Releases(), [])
+      await assert.rejects(client('sk-test').x12Releases(), /answered without a release list/)
+    })
+
+    it('treats a non-JSON 2xx as a wrong server, not a crash', async () => {
+      stubFetch(() => ({body: '<html>login</html>', headers: {'content-type': 'text/html'}}))
+      await assert.rejects(client('sk-test').x12Releases(), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /did not answer with JSON \(text\/html\)/)
+        assert.equal(err.exitCode, EXIT_UNUSABLE)
+        return true
+      })
+    })
+
+    it('sends a User-Agent naming the CLI on every request', async () => {
+      const {calls} = stubFetch(() => ({body: JSON.stringify({data: {releases: []}})}))
+      await new HttpApiClient({baseUrl: 'http://localhost:5004', token: 'sk', userAgent: 'tedi/0.0.0 (test)'}).x12Releases()
+      assert.equal(calls[0].headers['user-agent'], 'tedi/0.0.0 (test)')
     })
 
     it('omits the auth header when no token is set (releases is reachable without a key)', async () => {
@@ -181,8 +204,8 @@ describe('HttpApiClient', () => {
       await assert.rejects(client('sk-test').x12Segment('N1', req()), AccountUnavailableError)
     })
 
-    it('maps 404 to a contextual NotFoundError', async () => {
-      stubFetch(() => ({status: 404, body: JSON.stringify({error: 'Record not found'})}))
+    it('maps a coded 404 to a contextual NotFoundError', async () => {
+      stubFetch(() => ({status: 404, body: JSON.stringify({error: 'Record not found', code: 'not_found'})}))
       await assert.rejects(client('sk-test').x12Segment('ZZ', req({release: '004010'})), (err: unknown) => {
         assert.ok(err instanceof NotFoundError)
         assert.match(err.message, /No segment 'ZZ' in release 004010/)
@@ -204,9 +227,29 @@ describe('HttpApiClient', () => {
       })
     })
 
-    it('maps a 404 without resource context to a generic not-found (releases path)', async () => {
-      stubFetch(() => ({status: 404, body: ''}))
-      await assert.rejects(client('sk-test').x12Releases(), /Record not found/)
+    it('maps unknown_release to its own error pointing at the release list', async () => {
+      stubFetch(() => ({
+        status: 404,
+        body: JSON.stringify({error: "Unknown X12 release '999999'. GET /api/x12/releases lists the releases this server carries.", code: 'unknown_release'}),
+      }))
+      await assert.rejects(client('sk-test').x12Segment('N1', req({release: '999999'})), (err: unknown) => {
+        assert.ok(err instanceof UnknownReleaseError)
+        assert.match(err.message, /Unknown X12 release '999999'/)
+        // Not a verdict on N1, which exists in every release.
+        assert.equal(err.exitCode, EXIT_UNUSABLE)
+        assert.ok(err.suggestions.some((s) => s.includes('tedi x12 releases')))
+        return true
+      })
+    })
+
+    it('reads a 404 without the plane\'s JSON shape as a missing endpoint', async () => {
+      stubFetch(() => ({status: 404, body: '<html>Not Found</html>'}))
+      await assert.rejects(client('sk-test').x12Releases(), (err: unknown) => {
+        assert.ok(err instanceof NoSuchEndpointError)
+        assert.match(err.message, /No such endpoint at http:\/\/localhost:5004/)
+        assert.equal(err.exitCode, EXIT_UNUSABLE)
+        return true
+      })
     })
 
     it('maps an unexpected status to a generic error carrying the server message', async () => {
@@ -495,18 +538,20 @@ describe('HttpApiClient', () => {
       })
     })
 
-    it('reads a 404 as a missing endpoint, not a missing record', async () => {
+    it('reads a JSON routing 404 as a server without the endpoint, and an HTML one as a wrong base URL', async () => {
       // Nothing was looked up by id here, so a 404 means api.baseUrl points at a
-      // server without the route — "Record not found" would answer a question
+      // server without the route; "Record not found" would answer a question
       // nobody asked, and would hide the real problem.
-      stubFetch(() => ({status: 404, body: ''}))
+      stubFetch(() => ({status: 404, body: JSON.stringify({error: 'No such endpoint', code: 'no_route'})}))
       await assert.rejects(client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}), (err: unknown) => {
         assert.ok(err instanceof TediError)
         assert.match(err.message, /no EDI inspection endpoint \(HTTP 404\)/)
         assert.match(err.message, /http:\/\/localhost:5004/)
-        assert.ok(err.suggestions.some((s) => s.includes('api.baseUrl')))
         return true
       })
+
+      stubFetch(() => ({status: 404, body: '<html>Not Found</html>'}))
+      await assert.rejects(client('sk-test').ediInspect(INTERCHANGE, {format: 'console', color: false}), NoSuchEndpointError)
     })
 
     it('still maps the shared credential and throttle statuses', async () => {
@@ -566,37 +611,126 @@ describe('HttpApiClient', () => {
       const id = await client('sk-test-1234').whoami()
       assert.match(calls[0].url, /\/platform\/whoami$/)
       assert.equal(calls[0].headers.authorization, 'Key sk-test-1234')
+      // The REST identity shape, unchanged.
       assert.deepEqual(id, {
-        organization: 'Acme EDI',
-        organizationId: 'org-1',
+        organization: {id: 'org-1', name: 'Acme EDI'},
         keyScope: 'standard',
         keyLabel: 'CI key',
-        termsAccepted: true,
-        keyHint: '1234',
+        serviceTermsAccepted: true,
       })
     })
 
-    it('whoami degrades to IdentityUnavailableError on a 404 (older server)', async () => {
-      stubFetch(() => ({status: 404, body: ''}))
-      await assert.rejects(client('sk-test').whoami(), /no identity endpoint/i)
+    it('whoami treats a missing keyScope or organization as a contract violation, never a default', async () => {
+      stubFetch(() => ({body: JSON.stringify({organization: {id: 'org-1', name: 'Acme'}, serviceTermsAccepted: true})}))
+      await assert.rejects(client('sk-test').whoami(), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /answered without a key scope/)
+        assert.equal(err.exitCode, EXIT_UNUSABLE)
+        return true
+      })
+      stubFetch(() => ({body: JSON.stringify({keyScope: 'standard'})}))
+      await assert.rejects(client('sk-test').whoami(), /answered without an organization/)
     })
 
-    it('transactionList builds the query and unwraps rows plus pagination', async () => {
+    it('whoami degrades to IdentityUnavailableError only on a JSON 404', async () => {
+      stubFetch(() => ({status: 404, body: JSON.stringify({error: {message: 'No such endpoint', code: 'no_route'}})}))
+      await assert.rejects(client('sk-test').whoami(), /no identity endpoint/i)
+
+      // An HTML 404 is a wrong base path, and must not pass as "older server".
+      stubFetch(() => ({status: 404, body: '<html>Not Found</html>'}))
+      await assert.rejects(client('sk-test').whoami(), NoSuchEndpointError)
+    })
+
+    it('transactionList builds the query and returns the REST envelope', async () => {
       const {calls} = stubFetch(() => ({
         body: JSON.stringify({
           ediTransactions: [{id: 't1'}],
           pagination: {hasMore: true, nextCursor: 'abc'},
         }),
       }))
-      const page = await client('sk-test').transactionList({incoming: false, transactionSetIdentifier: '850', limit: 5})
+      const page = await client('sk-test').transactionList({direction: 'outbound', transactionSetIdentifier: '850', partner: 'acme', limit: 5})
       const url = new URL(calls[0].url)
       assert.equal(url.pathname, '/platform/edi_transactions')
-      assert.equal(url.searchParams.get('incoming'), 'false')
+      assert.equal(url.searchParams.get('direction'), 'outbound')
+      assert.equal(url.searchParams.get('incoming'), null)
       assert.equal(url.searchParams.get('transaction_set_identifier'), '850')
+      assert.equal(url.searchParams.get('partner'), 'acme')
       assert.equal(url.searchParams.get('limit'), '5')
-      assert.equal(page.items.length, 1)
-      assert.equal(page.hasMore, true)
-      assert.equal(page.nextCursor, 'abc')
+      assert.deepEqual(page, {ediTransactions: [{id: 't1'}], pagination: {hasMore: true, nextCursor: 'abc'}})
+    })
+
+    it('words an invalid_parameter 400 as the caller\'s input, exit 2', async () => {
+      stubFetch(() => ({status: 400, body: JSON.stringify({error: {message: 'Invalid cursor.', code: 'invalid_parameter'}})}))
+      await assert.rejects(client('sk-test').transactionList({cursor: 'garbage'}), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /rejected one of the values you passed: Invalid cursor/)
+        assert.doesNotMatch(err.message, /request failed/)
+        assert.equal(err.exitCode, EXIT_UNUSABLE)
+        assert.equal(err.code, 'invalid_parameter')
+        assert.ok(err.suggestions.some((s) => s.includes('--cursor')))
+        return true
+      })
+    })
+
+    it('resultList passes status and node through', async () => {
+      const {calls} = stubFetch(() => ({body: JSON.stringify({results: [], pagination: {hasMore: false, nextCursor: null}})}))
+      await client('sk-test').resultList({status: 'error', node: 'EDI to JSON'})
+      const url = new URL(calls[0].url)
+      assert.equal(url.searchParams.get('status'), 'error')
+      assert.equal(url.searchParams.get('node'), 'EDI to JSON')
+    })
+
+    it('traceGet reads the trace endpoint and turns a coded 404 into a defect', async () => {
+      const {calls} = stubFetch(() => ({body: JSON.stringify({traceGuid: 'g', processing: false, ediTransactions: [], results: [], feedEntries: [], logs: [], artifacts: []})}))
+      const trace = await client('sk-test').traceGet('g')
+      assert.match(calls[0].url, /\/platform\/traces\/g$/)
+      assert.equal(trace.processing, false)
+
+      stubFetch(() => ({status: 404, body: JSON.stringify({error: {message: 'Trace not found', code: 'not_found'}})}))
+      await assert.rejects(client('sk-test').traceGet('nope'), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /No trace 'nope'/)
+        assert.equal(err.exitCode, EXIT_DEFECT)
+        return true
+      })
+    })
+
+    it('partnerList and partnerGet read the partner endpoints', async () => {
+      const {calls} = stubFetch((r) =>
+        r.url.endsWith('/platform/partners')
+          ? {body: JSON.stringify({partners: [{key: 'ACME'}], pagination: {hasMore: false, nextCursor: null}})}
+          : {body: JSON.stringify({key: 'ACME', transactionSets: [], flows: []})},
+      )
+      const page = await client('sk-test').partnerList({})
+      assert.equal(page.partners[0]?.key, 'ACME')
+      const partner = await client('sk-test').partnerGet('acme')
+      assert.match(calls[1].url, /\/platform\/partners\/acme$/)
+      assert.equal(partner.key, 'ACME')
+    })
+
+    it('partnerGet on an unknown key points at partner list', async () => {
+      stubFetch(() => ({status: 404, body: JSON.stringify({error: {message: 'No partner found with key nope.', code: 'not_found', reason: 'partner'}})}))
+      await assert.rejects(client('sk-test').partnerGet('nope'), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /No partner 'nope' in your organization/)
+        assert.equal(err.exitCode, EXIT_DEFECT)
+        assert.ok(err.suggestions.some((s) => s.includes('tedi partner list')))
+        return true
+      })
+    })
+
+    it('partnerSend distinguishes a missing partner from a set the partner does not take', async () => {
+      stubFetch(() => ({
+        status: 404,
+        body: JSON.stringify({error: {message: 'Transaction set 850 is not configured for outbound on partner PETCO. It takes 810, 856.', code: 'not_found', reason: 'transaction_set'}}),
+      }))
+      await assert.rejects(client('sk-test').partnerSend('PETCO', '850', {}), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /Transaction set 850 is not configured for outbound on partner PETCO/)
+        assert.doesNotMatch(err.message, /No partner/)
+        assert.equal(err.exitCode, EXIT_DEFECT)
+        return true
+      })
     })
 
     it('transactionGet turns a coded 404 into a data-not-found defect', async () => {
@@ -610,13 +744,13 @@ describe('HttpApiClient', () => {
     })
 
     it('transactionGet reads a code-less 404 as a missing route, not a missing record', async () => {
-      // An older server has no show route; its routing 404 carries no error
-      // code. Asserting "no such transaction" (exit 1) there would hand CI a
+      // A wrong base path or an older server answers a 404 without the plane's
+      // shape. Asserting "no such transaction" (exit 1) there would hand CI a
       // false verdict about a record that exists.
       stubFetch(() => ({status: 404, body: '<html>Not Found</html>'}))
       await assert.rejects(client('sk-test').transactionGet('real-id'), (err: unknown) => {
-        assert.ok(err instanceof TediError)
-        assert.match(err.message, /no transaction endpoint/)
+        assert.ok(err instanceof NoSuchEndpointError)
+        assert.match(err.message, /No such endpoint at http:\/\/localhost:5004/)
         assert.equal(err.exitCode, EXIT_UNUSABLE)
         return true
       })
@@ -650,6 +784,7 @@ describe('HttpApiClient', () => {
           interchangeControlNumber: '000000001',
           groupControlNumber: '000000002',
           traceGuid: 'trace-1',
+          ediTransactionId: 'txn-1',
         }),
       }))
       const receipt = await client('sk-test').partnerSend('acme', '850', {po: 1}, 'order.json')
@@ -657,6 +792,7 @@ describe('HttpApiClient', () => {
       assert.equal(calls[0].method, 'POST')
       assert.deepEqual(JSON.parse(calls[0].body!), {contents: {po: 1}, filename: 'order.json'})
       assert.equal(receipt.traceGuid, 'trace-1')
+      assert.equal(receipt.ediTransactionId, 'txn-1')
     })
   })
 })

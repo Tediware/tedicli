@@ -1,17 +1,22 @@
 /**
  * Minimal terminal input helpers for secret entry, with no third-party prompt
  * dependency. Used by `tedi auth login` so an API key is entered via a no-echo
- * prompt or piped stdin — never through a command-line flag or argv, where it
+ * prompt or piped stdin, never through a command-line flag or argv, where it
  * would leak into shell history and process listings.
  */
 
 import {createInterface} from 'node:readline'
 
-/** Read all of stdin to a string. For piped, non-interactive input (CI). */
-export async function readStdin(): Promise<string> {
+/** Read all of stdin as bytes. For piped, non-interactive input (CI). */
+export async function readStdinBytes(): Promise<Buffer> {
   const chunks: Buffer[] = []
   for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
-  return Buffer.concat(chunks).toString('utf8')
+  return Buffer.concat(chunks)
+}
+
+/** Read all of stdin to a UTF-8 string. */
+export async function readStdin(): Promise<string> {
+  return (await readStdinBytes()).toString('utf8')
 }
 
 /**

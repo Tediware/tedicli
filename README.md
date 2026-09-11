@@ -2,15 +2,15 @@
 
 The official command-line client for the [Tediware](https://tediware.com) platform.
 
-`tedi` is a thin client over the Tediware API — no proprietary logic and no
+`tedi` is a thin client over the Tediware API: no proprietary logic and no
 licensed data live in the CLI. It includes:
 
 **X12 reference lookup**: access transactions, segments and elements from multiple X12
 releases.
 **Tools for your own EDI files**: scrubbing personal data out of an interchange on your
 machine and inspecting one against the standard.
-**Tediware data plane access**: read logs, EDI transactions, results, and artifacts.
-Send JSON for delivery as EDI, receive EDI as JSON, and more.
+**Tediware data plane access**: read your partners, EDI transactions, results,
+traces, logs and artifacts. Send JSON for delivery as EDI, receive EDI as JSON, and more.
 **An agent connection**: `tedi mcp serve` puts the platform's tools in front of a
 coding agent.
 
@@ -46,14 +46,16 @@ The key is never passed as a command-line flag, so it can't leak into shell
 history or process listings.
 
 ```bash
-tedi auth login            # prompts for the key with no echo, then stores it
-cat key.txt | tedi auth login   # or pipe it in (CI, agents, anything non-interactive)
+tedi auth login            # prompts for the key with no echo, stores it, confirms it with the server
+tedi auth login < key.txt  # or pipe it in (CI, agents, anything non-interactive)
 export TEDI_API_KEY=...    # or set it in the environment (one-off, CI, an agent's env; no login needed)
 
-tedi auth status           # show whether you're signed in
-tedi whoami                # show the authenticated identity (when available)
+tedi auth status           # the credential in use: signed in or not, stored or from the environment, label
+tedi whoami                # the identity behind it: organization, key scope, terms state
 tedi auth logout           # clear stored credentials
 ```
+
+`auth status` exits 2 when you are not signed in, so a script can gate on it.
 
 `TEDI_API_KEY` overrides any stored key at request time. Stored credentials live
 in a permissioned file in the CLI config directory today; OS-keychain storage is a
@@ -75,9 +77,9 @@ tedi x12 releases        # list supported X12 releases
 
 Every `x12` command accepts:
 
-- `--release / -r <id>` — the X12 release to look up (e.g. `004010`, `005010`).
+- `--release / -r <id>`: the X12 release to look up (e.g. `004010`, `005010`).
   Defaults to the `x12.release` config value, or `004010` if unset.
-- `--format console | markdown` — output format (default `console`). The licensed
+- `--format console | markdown`: output format (default `console`). The licensed
   X12 standard is presentation-only: `--json` is intentionally **not** offered for
   reference data and returns an explanatory message. Structured `--json` is for
   your own org data in future control- and data-plane commands.
@@ -88,18 +90,18 @@ colored, so piped and redirected output stays clean.
 
 `tedi x12 ele` additionally accepts:
 
-- `--all` — show every code, instead of the truncated console preview.
-- `--limit <n>` — show at most `n` codes. Console format only; `markdown` always
+- `--all`: show every code, instead of the truncated console preview.
+- `--limit <n>`: show at most `n` codes. Console format only; `markdown` always
   shows every code.
 
 ```bash
 tedi x12 ele 673 --all        # the whole code list, not the first 20
 tedi x12 ele 673 --limit 50   # a longer preview
-tedi x12 ele 673 | grep -i rejected   # piped output is complete, so this searches all 832 codes
+tedi x12 ele 673 | grep -i rejected   # piped output is complete, so this searches the whole code list
 ```
 
-Truncation is an interactive affordance — the footer asks you to run a second
-lookup — so it applies only when stdout is a terminal. Piped or redirected output
+Truncation is an interactive affordance (the footer asks you to run a second
+lookup), so it applies only when stdout is a terminal. Piped or redirected output
 gets the complete list by default, for the same reason it gets no color. Pass
 `--limit` if you want the short list on the other end of a pipe anyway.
 
@@ -116,28 +118,40 @@ format-preserving, so the scrubbed file still parses and still reproduces the
 problem you are chasing.
 
 ```bash
-tedi edi obfuscate <file>              # obfuscated EDI to stdout ('-' reads stdin)
+tedi edi obfuscate <file>              # obfuscated EDI to stdout ('-' or a bare pipe reads stdin)
 tedi edi obfuscate claims.edi -o clean.edi   # write to a file instead
 tedi edi obfuscate claims.edi --seed s       # reproducible replacements
+tedi edi obfuscate order.edi --scrub-parties # drop-ship order: the ship-to is a consumer
 ```
 
 `edi obfuscate` replaces personal data in an X12 interchange with
-format-preserving fakes: person names, street addresses, city/ZIP (first three
+format-preserving fakes: person names and the addresses under them (first three
 ZIP digits kept), dates of birth (year kept), phone/fax/email, SSNs, member and
-medical-record identifiers, patient account numbers, bank routing/account
-numbers, and free-text notes. The same value always maps to the same replacement
-within a run, so cross-segment references stay intact.
+medical-record identifiers, patient account numbers, and bank routing/account
+numbers. The same value always maps to the same replacement within a run, so
+cross-segment references stay intact.
+
+The defaults follow the document family. Healthcare claims and enrollment (837,
+834, 835, 270/271) scrub fully, free text included, because every party is a
+person. Supply-chain purchase orders, shipments and invoices (850, 856, 810)
+keep business parties, their addresses and their free text, because that is what
+a supplier debugging a ship-to needs. `--scrub-parties` treats every N1 ship-to
+and bill-to as a person (drop-ship orders), and `--scrub-text` scrubs MSG, MTX,
+NTE and K3 on any document.
 
 Everything structural survives byte-for-byte: delimiters, qualifiers, code
 values, dates of service, monetary amounts, control numbers, segment counts, and
-element lengths (including the fixed-width ISA header) — an obfuscated file
-parses exactly like the original. Business identifiers (sender/receiver routing
-IDs, organization names, NPIs, tax IDs) are kept so the file stays debuggable.
+element lengths (including the fixed-width ISA header), so an obfuscated file
+parses exactly like the original. Files are read as UTF-8 when they are valid UTF-8
+and as Latin-1 otherwise, and written back the same way, so either kind comes
+back byte-identical where nothing was scrubbed.
+Business identifiers (sender/receiver routing IDs, organization names, NPIs, tax
+IDs) are kept so the file stays debuggable.
 
 Faults in a value survive too: each replacement is invalid in the same way the
 value it replaces was. A date of birth that isn't a real date stays impossible
 rather than being quietly replaced with a valid one, and a date range that ran
-backwards still does — so a file you scrub before sending to a partner still
+backwards still does, so a file you scrub before sending to a partner still
 reproduces the problem you're chasing. Relationships _between_ values are not
 preserved, since the values are scrubbed independently: a date of birth that
 fell after the date of service may no longer.
@@ -151,22 +165,23 @@ files.
 ### Inspecting an interchange
 
 ```bash
-tedi edi inspect claims.edi                 # report to stdout ('-' reads stdin)
+tedi edi inspect claims.edi                 # report to stdout ('-' or a bare pipe reads stdin)
 tedi edi inspect claims.edi --no-obfuscate  # upload the file verbatim instead
-tedi edi inspect claims.edi --format markdown > report.md
+tedi edi inspect claims.edi --format markdown -o report.md
 tedi edi inspect claims.edi --fail-on notice  # count notices toward exit 1 too
 ```
 
 `edi inspect` annotates the interchange, runs framing and envelope checks, and
-validates it against the X12 standard; findings anchor to the line numbers of the
-report, which reprints the file one segment per line.
+validates it against the X12 standard; findings cite the segment's position in
+the report, which shows the interchange as an annotated tree.
 
 **This command uploads your file**, and requires an API key, because neither the
 parser nor the licensed reference data it validates against ships in the CLI. It
-therefore runs the local scrub described above **by default** — forgetting a flag
-should never be what puts personal data on the wire. The scrub is
-format-preserving, so the report still describes your original file's structure
-exactly; `--seed` applies to it.
+therefore runs the local scrub described above **by default**, with the same
+family defaults and the same `--scrub-parties` and `--scrub-text` flags:
+forgetting a flag should never be what puts personal data on the wire. The scrub
+is format-preserving, so the report still describes your original file's
+structure exactly; `--seed` applies to it.
 
 What that costs you: findings that quote a personal value quote the replacement
 rather than what's in your file. Business identifiers, code values, amounts, and
@@ -174,14 +189,15 @@ control numbers are kept as-is, so most quoted values still match.
 
 `--no-obfuscate` uploads the file verbatim. Reach for it when a finding you
 expect is missing, or when the scrub can't read the envelope well enough to run
-at all — a mangled ISA fails locally, and the server may still be able to
-diagnose it.
+at all: a mangled ISA fails locally with exit 1, and the server may still be able
+to diagnose it.
 
 Reports are `--format console` (default) or `--format markdown`; as with X12
 reference, `--json` is not offered.
 
 Exit codes follow the CLI-wide contract in [Exit codes](#exit-codes): `1` is a
-finding, `2` is a run that cannot be trusted.
+finding (including "this is not an X12 interchange"), `2` is a run that cannot
+be trusted. A one-line count with the exit reason goes to stderr on every run.
 
 ## Exit codes
 
@@ -196,10 +212,19 @@ your input. `2` means nothing was learned, and must never be treated as a pass.
 | `2`  | The command did not run, or its result cannot be trusted. Nothing was learned. |
 
 Exit `2` covers the ordinary tool failures: a mistyped flag, no key, rate
-limited, network gone, a server fault, a server too old to know an endpoint. A
+limited, network gone, a server fault, a server too old to know an endpoint, and
+anything the CLI did not anticipate (printed as one line, no stack trace). A
 data-plane `404` counts as "not found" (exit `1`) only when the server says so
-in the body; a bare routing `404` from an older server exits `2`, so a stale
-server can never tell a job that an existing record is missing.
+in the body; a `404` without the platform's JSON shape is "no such endpoint,
+check `api.baseUrl`" and exits `2`, so a wrong base URL can never tell a job
+that an existing record is missing.
+
+Under `--json`, an error is JSON too, on stdout, in one shape whatever the
+cause, so a script parses one thing for both outcomes:
+
+```json
+{"error": {"message": "No transaction 'nope' in your organization.", "code": "not_found", "suggestions": ["..."], "exitCode": 1}}
+```
 
 `edi inspect` adds two cases where a clean-looking report is not evidence of
 anything: when the server says a check did not run (the inspection is
@@ -227,25 +252,37 @@ The data-plane commands read and drive your own organization's traffic. They
 need a standard API key and they all support `--json` for scripting.
 
 ```bash
-tedi transaction list --outgoing --ack unacknowledged
-tedi transaction get <id>            # envelope, outcome, stored artifacts
+tedi partner list                    # your partners: keys, connections, the sets each takes
+tedi partner get ACME                # one partner: connection, envelopes, webhooks, sets with readiness, flows
+
+tedi partner send ACME 850 order.json       # your JSON in, EDI out to the partner
+tedi partner send ACME 856 ship.json --wait # ...and wait for the trace to finish (exit 1 on error)
+tedi partner receive ACME 850.edi           # raw partner EDI into the inbound flow
+
+tedi trace <guid>                    # everything on a trace: transactions, results, feed, artifacts, logs
+
+tedi transaction list --direction outbound --ack unacknowledged
+tedi transaction get <id>            # envelope, outcome, acknowledgment, its own artifacts
+tedi transaction get --trace <guid>  # the same, found by the trace a receipt handed back
 tedi transaction logs <id>           # the trace's processing logs
 tedi transaction resend <id>         # re-deliver an outbound document
 
-tedi result list --trace <guid>
+tedi result list --status error
 tedi result get <id>
 
-tedi feed list                       # deliverable documents and errors
+tedi feed list                       # delivered documents and errors, last 24 hours
+tedi feed list --since 3d --status error --partner ACME
 tedi feed list --follow              # tail it live (JSONL with --json)
 
 tedi artifact get <id> -o file.edi   # download stored document bytes
-
-tedi partner send ACME 850 order.json   # your JSON in, EDI out to the partner
-tedi partner receive ACME 850.edi       # raw partner EDI into the inbound flow
 ```
 
-`tedi whoami` and `tedi auth status` report the key's organization, scope, and
-service-terms state.
+Every receipt (`partner send`, `partner receive`, `transaction resend`) ends
+with the `tedi trace <guid>` line to follow it with. Direction is always
+`inbound` (received from a partner) or `outbound` (sent to one); `--set` names a
+transaction set; `--since` takes an ISO 8601 timestamp with a zone, a bare date,
+or a relative form such as `2h`. Timestamps print as `YYYY-MM-DD HH:MM:SSZ`.
+`--json` prints the server's response unchanged.
 
 ## Connect your agent
 
@@ -275,7 +312,8 @@ others), the entry is the same command:
 ```
 
 The bridge forwards every request to the platform and holds no tool logic of its
-own. It needs a standard API key; run `tedi auth login` first, or set
+own. It answers the `initialize` handshake current hosts still open with, so they
+connect to the platform's newer protocol without knowing it. It needs a standard API key; run `tedi auth login` first, or set
 `TEDI_API_KEY` in the agent's environment. A client that speaks Streamable HTTP
 directly can skip the CLI and connect to `https://tediware.com/mcp` with an
 `Authorization: Key <api_key>` header.
@@ -289,9 +327,11 @@ first if it carries anything that should stay on your machine.
 ## Configuration
 
 ```bash
-tedi config list                       # show all config values and their sources
+tedi config list                       # the config directory, every value, and where each comes from
 tedi config get x12.release
 tedi config set x12.release 005010
+tedi config set api.baseUrl http://localhost:5004   # scheme and host only; no path
+tedi config unset api.baseUrl
 ```
 
 | Key           | Env override        | Default                |
@@ -299,19 +339,37 @@ tedi config set x12.release 005010
 | `x12.release` | `TEDI_X12_RELEASE`  | `004010`               |
 | `api.baseUrl` | `TEDI_API_BASE_URL` | `https://tediware.com` |
 
-The config directory can be relocated with `TEDI_CONFIG_DIR`.
+Profiles keep several servers' config and credentials apart:
+`--profile <name>` on any command reads and writes `~/.tedi-profiles/<name>`
+(under `$XDG_CONFIG_HOME` when that is set). `TEDI_CONFIG_DIR` relocates the
+default directory outright.
+
+Environment variables, in one place:
+
+| Variable                       | Effect                                                     |
+| ------------------------------ | ---------------------------------------------------------- |
+| `TEDI_API_KEY`                 | The API key; overrides a stored one at request time.       |
+| `TEDI_API_BASE_URL`            | Overrides `api.baseUrl`.                                   |
+| `TEDI_X12_RELEASE`             | Overrides `x12.release`.                                   |
+| `TEDI_CONFIG_DIR`              | Where config and credentials live.                         |
+| `TEDI_SKIP_NEW_VERSION_CHECK`  | `1` turns off the daily new-version notice.                |
+| `TEDI_API_MOCK`                | `1` uses the synthetic development backend (see below).    |
+| `NO_COLOR`                     | Disables color, like `--no-color`; `--color` forces it on. |
 
 ## Updating
 
 ```bash
 tedi update              # upgrade to the latest published version
-tedi update --version X  # install a specific version
+tedi update 0.4.1        # install a specific version
 ```
 
 `tedi update` reinstalls the CLI from npm (`npm install -g @tediware/tedi@latest`)
-and then prints the new version's changelog. The CLI also checks for updates in
-the background (throttled, cached) and shows a non-interrupting nudge when a newer
-version is available; you can always upgrade manually with `npm install -g @tediware/tedi`.
+and then prints the new version's changelog. It refuses when the copy running is
+not the one npm would replace (a checkout on PATH, a wrapper, a different Node's
+global prefix), and says what it found. The CLI also checks npm once a day and
+prints a one-line notice on a terminal when a newer version is available
+(never under `--json`, never inside `mcp serve`); `TEDI_SKIP_NEW_VERSION_CHECK=1`
+turns that off.
 
 ## Development
 
@@ -327,7 +385,7 @@ npm test               # run tests
 npm run check:licensed-data   # licensed-data tripwire (also runs in CI)
 ```
 
-By default the CLI talks to the real Tediware API — `api.baseUrl` defaults to the
+By default the CLI talks to the real Tediware API: `api.baseUrl` defaults to the
 production host (`https://tediware.com`), so you just need a key (the HTTP contract
 is documented in [`API.md`](API.md)):
 
@@ -364,7 +422,7 @@ and creates the GitHub Release whose notes power `tedi update`'s changelog. See
 
 ## Contributing
 
-Contributions are welcome under the [DCO](https://developercertificate.org/) —
+Contributions are welcome under the [DCO](https://developercertificate.org/);
 sign commits with `git commit -s`. See [CONTRIBUTING.md](./CONTRIBUTING.md).
 
 **One hard rule: never commit licensed X12 data** (including test fixtures and

@@ -1,12 +1,14 @@
 import {Args} from '@oclif/core'
 
-import {X12Command} from '../../x12-base-command.js'
+import {SERVER_LOOKUP, X12Command} from '../../x12-base-command.js'
 
 export default class X12Seg extends X12Command<typeof X12Seg> {
   // `segment` keeps working but stays out of the help listing; `seg` is canonical.
   static hiddenAliases = ['x12:segment']
 
-  static description = 'Look up an X12 segment definition (e.g. N1).'
+  static summary = 'Look up an X12 segment definition (e.g. N1).'
+
+  static description = SERVER_LOOKUP
 
   static examples = ['<%= config.bin %> x12 seg N1', '<%= config.bin %> x12 seg REF -r 005010']
 
@@ -15,10 +17,10 @@ export default class X12Seg extends X12Command<typeof X12Seg> {
   }
 
   async run(): Promise<void> {
+    const id = this.referenceId(this.args.id, 'segment id')
     const req = await this.referenceRequest()
     const client = await this.getAuthedClient()
-    // Segment ids are conventionally uppercase; accept whatever case the user types.
-    const doc = await client.x12Segment(this.args.id.toUpperCase(), req)
+    const doc = await client.x12Segment(id, req)
     this.printReference(doc)
   }
 }

@@ -5,10 +5,11 @@
  */
 
 import {readFile} from 'node:fs/promises'
+import {homedir} from 'node:os'
 import {join} from 'node:path'
 
 import {writeFileAtomic} from './atomic-write.js'
-import {TediError} from './errors.js'
+import {FileAccessError, TediError} from './errors.js'
 
 export const DEFAULT_X12_RELEASE = '004010'
 // API.md: production host is https://tediware.com; reference endpoints live
@@ -41,14 +42,33 @@ export function assertConfigKey(key: string): asserts key is ConfigKey {
 }
 
 /**
- * Validate `api.baseUrl`.
+ * The directory a `--profile` name resolves to. Profiles sit beside oclif's
+ * own config dir: `~/.tedi-profiles/<name>`, or under `$XDG_CONFIG_HOME` when
+ * that is set, the way oclif places `tedi/` itself.
+ */
+export function profileDir(name: string, env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    throw new TediError(`Invalid profile name: ${JSON.stringify(name)}`, {
+      suggestions: ['Profile names are letters, digits, dots, dashes and underscores, e.g. `--profile staging`.'],
+    })
+  }
+  const xdg = env.XDG_CONFIG_HOME
+  return xdg ? join(xdg, 'tedi-profiles', name) : join(home, '.tedi-profiles', name)
+}
+
+/**
+ * Validate `api.baseUrl` and return it normalized (no trailing slash).
  *
  * Exported on its own because the value has three sources and only one of them
  * passes through `config set`: `TEDI_API_BASE_URL` and a hand-edited config.json
  * reach the client directly. Without a check at the point of use, an unusable
  * value surfaces as a bare `TypeError: Invalid URL` from node's fetch.
+ *
+ * Only the scheme and host (with an optional port) are accepted. A path on the
+ * base URL is the most common way to end up with every endpoint answering 404,
+ * so it is refused here rather than diagnosed later.
  */
-export function assertValidBaseUrl(value: string): void {
+export function assertValidBaseUrl(value: string): string {
   let url: URL
   try {
     url = new URL(value)
@@ -56,7 +76,7 @@ export function assertValidBaseUrl(value: string): void {
     throw new TediError(`api.baseUrl is not a valid URL: ${value}`, {
       suggestions: [
         'Set it to a full URL including the scheme, e.g. `tedi config set api.baseUrl https://tediware.com`.',
-        'Run `tedi config list` to see the effective value and where it comes from — TEDI_API_BASE_URL overrides the stored config.',
+        'Run `tedi config list` to see the effective value and where it comes from. TEDI_API_BASE_URL overrides the stored config.',
       ],
     })
   }
@@ -66,6 +86,21 @@ export function assertValidBaseUrl(value: string): void {
       suggestions: ['Use https for the Tediware platform, or http for a local development server.'],
     })
   }
+
+  const problems: string[] = []
+  if (url.username || url.password) problems.push('a username or password')
+  if (url.pathname !== '/' && url.pathname !== '') problems.push(`a path (${url.pathname})`)
+  if (url.search) problems.push('a query string')
+  if (url.hash) problems.push('a fragment')
+  if (problems.length > 0) {
+    throw new TediError(`api.baseUrl must be the scheme and host only, but ${value} carries ${problems.join(', ')}.`, {
+      suggestions: [
+        `Use ${url.protocol}//${url.host} instead. The CLI adds /api, /platform and /mcp itself.`,
+      ],
+    })
+  }
+
+  return `${url.protocol}//${url.host}`
 }
 
 /**
@@ -77,23 +112,42 @@ export function assertValidBaseUrl(value: string): void {
  */
 export function assertValidRelease(value: string): void {
   if (!/^\d{6}$/.test(value)) {
-    throw new TediError(`x12.release must be a six-digit release code, e.g. 004010 — got: ${value}`, {
+    throw new TediError(`x12.release must be a six-digit release code such as 004010, not ${value}.`, {
       suggestions: ['Run `tedi x12 releases` to list the releases the platform carries.'],
     })
   }
 }
 
-/** Validate a value before it is persisted, so a typo fails now rather than on the next lookup. */
-export function assertConfigValue(key: ConfigKey, value: string): void {
-  if (key === 'api.baseUrl') assertValidBaseUrl(value)
+/** Validate a value before it is persisted, returning the form to store. */
+export function normalizeConfigValue(key: ConfigKey, value: string): string {
+  if (key === 'api.baseUrl') return assertValidBaseUrl(value)
   if (key === 'x12.release') assertValidRelease(value)
+  return value
+}
+
+/** The problem with a configured value, or undefined when it is usable. */
+export function configValueProblem(key: ConfigKey, value: string): string | undefined {
+  try {
+    normalizeConfigValue(key, value)
+    return undefined
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
+}
+
+export interface ConfigEntry {
+  key: ConfigKey
+  value: string
+  source: 'env' | 'config' | 'default'
+  /** Set when the effective value would be refused at the point of use. */
+  problem?: string
 }
 
 export class ConfigStore {
-  private readonly file: string
+  readonly file: string
   private cache: Record<string, string> | undefined
 
-  constructor(configDir: string) {
+  constructor(readonly configDir: string) {
     this.file = join(configDir, 'config.json')
   }
 
@@ -112,21 +166,30 @@ export class ConfigStore {
     await this.save(persisted)
   }
 
-  async unset(key: ConfigKey): Promise<void> {
+  /** Remove a persisted value. Returns whether one was there to remove. */
+  async unset(key: ConfigKey): Promise<boolean> {
     const persisted = await this.load()
+    const had = key in persisted
     delete persisted[key]
     await this.save(persisted)
+    return had
   }
 
-  /** All known keys with their effective value and source. */
-  async list(): Promise<Array<{key: ConfigKey; value: string; source: 'env' | 'config' | 'default'}>> {
+  /** All known keys with their effective value, source, and any problem with it. */
+  async list(): Promise<ConfigEntry[]> {
     const persisted = await this.load()
     return (Object.keys(CONFIG_KEYS) as ConfigKey[]).map((key) => {
       const spec = CONFIG_KEYS[key]
       const fromEnv = process.env[spec.env]
-      if (fromEnv !== undefined && fromEnv !== '') return {key, value: fromEnv, source: 'env' as const}
-      if (persisted[key] !== undefined) return {key, value: persisted[key]!, source: 'config' as const}
-      return {key, value: spec.default, source: 'default' as const}
+      const entry: ConfigEntry =
+        fromEnv !== undefined && fromEnv !== ''
+          ? {key, value: fromEnv, source: 'env'}
+          : persisted[key] !== undefined
+            ? {key, value: persisted[key]!, source: 'config'}
+            : {key, value: spec.default, source: 'default'}
+      const problem = configValueProblem(key, entry.value)
+      if (problem) entry.problem = problem
+      return entry
     })
   }
 
@@ -140,16 +203,38 @@ export class ConfigStore {
         this.cache = {}
         return this.cache
       }
-      throw err
+      throw new FileAccessError('read', this.file, err)
     }
 
+    let parsed: unknown
     try {
-      this.cache = JSON.parse(raw) as Record<string, string>
+      parsed = JSON.parse(raw)
     } catch {
       throw new TediError(`The tedi config file is not valid JSON: ${this.file}`, {
         suggestions: ['Fix the file by hand, or delete it to reset to defaults.'],
       })
     }
+
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new TediError(`The tedi config file is not a JSON object: ${this.file}`, {
+        suggestions: ['Fix the file by hand, or delete it to reset to defaults.'],
+      })
+    }
+
+    // A hand-edited file can hold anything. Values are read as strings
+    // everywhere, so a number or an object here would surface far from its
+    // cause; say which key is wrong and where.
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value !== 'string') {
+        throw new TediError(`The tedi config file has a non-string value for ${key}: ${this.file}`, {
+          suggestions: [
+            `Config values are strings, e.g. "${key}": "${String(value)}". Fix the file by hand, or delete it to reset to defaults.`,
+          ],
+        })
+      }
+    }
+
+    this.cache = parsed as Record<string, string>
     return this.cache
   }
 

@@ -7,13 +7,21 @@ import {Hook} from '@oclif/core'
 
 import {fetchChangelog, parseRepoSlug} from '../../lib/changelog.js'
 
-/** Read `--version X` / `--version=X` from the update command's argv, if present. */
-function readVersionFlag(argv: string[]): string | undefined {
-  const eq = argv.find((a) => a.startsWith('--version='))
-  if (eq) return eq.slice('--version='.length)
-  const i = argv.indexOf('--version')
-  const next = i === -1 ? undefined : argv[i + 1]
-  return next && !next.startsWith('-') ? next : undefined
+/** Global flags that take a value, whose value is not the positional. */
+const VALUE_FLAGS = new Set(['--profile'])
+
+/** The positional target version from the update command's argv, if any. */
+export function readTargetVersion(argv: string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const token = argv[i] ?? ''
+    if (VALUE_FLAGS.has(token)) {
+      i++
+      continue
+    }
+    if (token.startsWith('-')) continue
+    return token
+  }
+  return undefined
 }
 
 function sameVersion(a: string, b: string): boolean {
@@ -24,16 +32,12 @@ function sameVersion(a: string, b: string): boolean {
 const hook: Hook<'postrun'> = async function (opts) {
   if (opts.Command?.id !== 'update') return
 
-  const argv = opts.argv ?? []
-  // `update --available` only lists versions; nothing was installed.
-  if (argv.includes('--available')) return
-
   const {repository} = opts.config.pjson
   const repositoryUrl = typeof repository === 'string' ? repository : repository?.url
   const repoSlug = parseRepoSlug(repositoryUrl)
   if (!repoSlug) return
 
-  const requestedVersion = readVersionFlag(argv)
+  const requestedVersion = readTargetVersion(opts.argv ?? [])
 
   try {
     const entry = await fetchChangelog(repoSlug, {
@@ -41,7 +45,7 @@ const hook: Hook<'postrun'> = async function (opts) {
       userAgent: opts.config.userAgent,
     })
     if (!entry) return
-    // Updating to "latest" while already on it installs nothing new — don't
+    // Updating to "latest" while already on it installs nothing new: don't
     // print release notes for a version the user already had.
     if (!requestedVersion && sameVersion(entry.version, opts.config.version)) return
 

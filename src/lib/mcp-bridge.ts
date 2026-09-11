@@ -7,13 +7,19 @@
  * key never has to be pasted into an agent's config file.
  *
  * It contains no tool logic. Each line on stdin is one JSON-RPC message; each
- * request becomes one HTTP POST whose body is that message unchanged, and the
- * server's JSON-RPC reply is written back as one line. The only messages the
- * bridge authors itself are the ones a transport adapter has to: parse and
- * framing errors, a missing protocol version (the server reports that as a
- * header mismatch, which means nothing on a transport with no headers), and
- * failures that never produced a JSON-RPC body (a 429 from the rate limiter,
- * an unreachable server, a timeout).
+ * request becomes one HTTP POST whose body is that message, and the server's
+ * JSON-RPC reply is written back as one line. The messages the bridge authors
+ * itself are the ones a transport adapter has to (parse and framing errors,
+ * failures that never produced a JSON-RPC body: a 429 from the rate limiter,
+ * an unreachable server, a timeout) plus the legacy-era handshake.
+ *
+ * The handshake is the one place the bridge speaks for the server. Every
+ * shipping host still opens with the 2025-11-25 `initialize` exchange, while the
+ * platform speaks only 2026-07-28, which has no handshake at all. So the bridge
+ * answers `initialize`, swallows `notifications/initialized`, answers `ping`,
+ * and stamps the modern protocol version into `_meta` on every request it
+ * forwards. Everything else is the server's. The shim is dated: see
+ * ai/tickets/tedi-mcp-legacy-era-revisit.md in the tediware repo.
  *
  * Per the stdio binding, nothing but MCP messages may be written to the output
  * stream. Diagnostics go to `stderr`.
@@ -22,7 +28,7 @@
 import {createInterface} from 'node:readline'
 import type {Readable, Writable} from 'node:stream'
 
-/** The only protocol revision the platform serves; named in the error a version-less request gets. */
+/** The only protocol revision the platform serves; stamped into every forwarded request. */
 export const MCP_PROTOCOL_VERSION = '2026-07-28'
 
 export const META_PROTOCOL_VERSION = 'io.modelcontextprotocol/protocolVersion'
@@ -78,17 +84,36 @@ export function encodeHeaderValue(value: string): string {
   return `=?base64?${Buffer.from(value, 'utf8').toString('base64')}?=`
 }
 
-/**
- * The transport headers mirrored from a request body. The protocol version is
- * the caller's to have supplied; `undefined` means the body carries none and the
- * request should not be sent (see `runBridge`).
- */
-export function transportHeaders(message: Record<string, unknown>): Record<string, string> | undefined {
+/** The protocol version a message names in `_meta`, if any. */
+export function metaVersion(message: Record<string, unknown>): string | undefined {
   const params = isObject(message.params) ? message.params : {}
   const meta = isObject(params._meta) ? params._meta : {}
   const version = meta[META_PROTOCOL_VERSION]
-  if (typeof version !== 'string' || version.length === 0) return undefined
+  return typeof version === 'string' && version.length > 0 ? version : undefined
+}
 
+/**
+ * The same message with the platform's protocol version stamped into
+ * `params._meta` when the caller named none. A legacy host never sets it; a
+ * modern one already has, and its value is left alone (a disagreement is
+ * refused before this runs).
+ */
+export function withProtocolVersion(message: Record<string, unknown>): Record<string, unknown> {
+  if (metaVersion(message)) return message
+  const params = isObject(message.params) ? message.params : {}
+  const meta = isObject(params._meta) ? params._meta : {}
+  return {...message, params: {...params, _meta: {...meta, [META_PROTOCOL_VERSION]: MCP_PROTOCOL_VERSION}}}
+}
+
+/**
+ * The transport headers mirrored from a request body. The protocol version is
+ * read from `_meta`, which `withProtocolVersion` has already filled in.
+ */
+export function transportHeaders(message: Record<string, unknown>): Record<string, string> | undefined {
+  const version = metaVersion(message)
+  if (!version) return undefined
+
+  const params = isObject(message.params) ? message.params : {}
   const method = message.method as string
   const headers: Record<string, string> = {
     [HEADER.PROTOCOL_VERSION]: version,
@@ -118,9 +143,11 @@ export interface ForwardResponse {
 /** How the bridge sends a request. Injected so tests can run without a socket. */
 export type Forwarder = (req: ForwardRequest) => Promise<ForwardResponse>
 
-/** The production forwarder: one POST to `${baseUrl}/mcp` with the platform credential. */
-export function httpForwarder(opts: {baseUrl: string; token: string; timeoutMs?: number}): Forwarder {
-  const url = new URL('/mcp', opts.baseUrl)
+/** The production forwarder: one POST to `<base>/mcp` with the platform credential. */
+export function httpForwarder(opts: {baseUrl: string; token: string; timeoutMs?: number; userAgent?: string}): Forwarder {
+  // Appended the way the HTTP client appends its paths, so the two can never
+  // disagree about where the base URL ends.
+  const url = `${opts.baseUrl.replace(/\/+$/, '')}/mcp`
   return async ({body, headers, signal}) => {
     // Whichever fires first: the client's cancellation or the deadline. The
     // deadline covers the body read too, like fetchWithTimeout's does.
@@ -134,6 +161,7 @@ export function httpForwarder(opts: {baseUrl: string; token: string; timeoutMs?:
           accept: 'application/json, text/event-stream',
           authorization: `Key ${opts.token}`,
           'content-type': 'application/json',
+          ...(opts.userAgent ? {'user-agent': opts.userAgent} : {}),
         },
         signal: anySignal(signal, deadline),
       })
@@ -167,17 +195,26 @@ export interface BridgeOptions {
   /** Diagnostics only; never MCP messages. */
   stderr?: Writable
   forward: Forwarder
+  /** Reported as the server version in the local `initialize` answer. */
+  version?: string
+  /** Aborting it stops reading input; what is in flight is still answered. */
+  shutdown?: AbortSignal
 }
 
 /**
  * Run the bridge until `input` ends and every in-flight request has answered.
  * Requests are forwarded concurrently and answered in whatever order the server
  * replies; the client correlates by id, as the stdio binding requires.
+ *
+ * The end of `input` is the client's graceful shutdown; `shutdown` is the
+ * process's (SIGTERM, SIGINT). Either way what is in flight is drained before
+ * the promise resolves, so no answer is lost.
  */
 export async function runBridge(opts: BridgeOptions): Promise<void> {
   const pending = new Set<Promise<void>>()
   const inFlight = new Map<string, AbortController>()
   const idKey = (id: JsonRpcId) => `${typeof id}:${String(id)}`
+  let handshakeNoted = false
 
   const write = (message: unknown) => {
     // JSON.stringify never emits a raw newline, which is what keeps one message
@@ -187,6 +224,12 @@ export async function runBridge(opts: BridgeOptions): Promise<void> {
   const note = (text: string) => opts.stderr?.write(`tedi mcp serve: ${text}\n`)
   const writeError = (id: JsonRpcId, code: number, message: string, data?: unknown) => {
     write({jsonrpc: '2.0', id, error: data === undefined ? {code, message} : {code, message, data}})
+  }
+  const refuseVersion = (id: JsonRpcId, requested: string | null) => {
+    writeError(id, RPC.UNSUPPORTED_PROTOCOL_VERSION, 'Unsupported protocol version', {
+      supported: [MCP_PROTOCOL_VERSION],
+      requested,
+    })
   }
 
   const handleLine = async (line: string): Promise<void> => {
@@ -220,19 +263,52 @@ export async function runBridge(opts: BridgeOptions): Promise<void> {
       return
     }
 
-    // No id: a notification. The only one the core protocol sends client to
-    // server is notifications/cancelled, and it means something here, not on
-    // the server: the bridge drops the connection for that request and writes
-    // nothing further for it. Any other notification is dropped, because a
-    // notification must not be answered and the server would answer it with a
-    // refusal.
+    // No id: a notification. notifications/cancelled means something here, not
+    // on the server: the bridge drops the connection for that request and
+    // writes nothing further for it. notifications/initialized is the tail of
+    // the legacy handshake the bridge answers itself, so it is swallowed. Any
+    // other notification is dropped, because a notification must not be
+    // answered and the server would answer it with a refusal.
     if (id === undefined || id === null) {
       if (message.method === 'notifications/cancelled') {
         const requestId = isObject(message.params) ? message.params.requestId : undefined
         if (typeof requestId === 'string' || typeof requestId === 'number') inFlight.get(idKey(requestId))?.abort()
-      } else {
+      } else if (message.method !== 'notifications/initialized') {
         note(`dropped notification ${message.method}`)
       }
+      return
+    }
+
+    const explicit = metaVersion(message)
+    if (explicit && explicit !== MCP_PROTOCOL_VERSION) {
+      refuseVersion(id, explicit)
+      return
+    }
+
+    // The legacy handshake, answered locally. The requested version is echoed
+    // so the host proceeds; the capabilities are static because the tool,
+    // resource and prompt lists themselves are forwarded on request.
+    if (message.method === 'initialize') {
+      const params = isObject(message.params) ? message.params : {}
+      const requested = typeof params.protocolVersion === 'string' ? params.protocolVersion : MCP_PROTOCOL_VERSION
+      if (!handshakeNoted) {
+        handshakeNoted = true
+        note(`client requested protocol ${requested}; answering the handshake locally and forwarding as ${MCP_PROTOCOL_VERSION}`)
+      }
+      write({
+        jsonrpc: '2.0',
+        id,
+        result: {
+          protocolVersion: requested,
+          capabilities: {tools: {}, resources: {}, prompts: {}},
+          serverInfo: {name: 'tediware', version: opts.version ?? 'unknown'},
+        },
+      })
+      return
+    }
+
+    if (message.method === 'ping') {
+      write({jsonrpc: '2.0', id, result: {}})
       return
     }
 
@@ -245,17 +321,10 @@ export async function runBridge(opts: BridgeOptions): Promise<void> {
       return
     }
 
-    const headers = transportHeaders(message)
+    const stamped = withProtocolVersion(message)
+    const headers = transportHeaders(stamped)
     if (!headers) {
-      // The server would call this a header mismatch (-32020), which is the
-      // HTTP binding talking. On stdio the accurate statement is that the
-      // request named no protocol version; naming the supported one is what
-      // the spec asks of a modern-only server, since a legacy client's
-      // initialize has no fall-forward path and this may be its only clue.
-      writeError(id, RPC.UNSUPPORTED_PROTOCOL_VERSION, 'Unsupported protocol version', {
-        supported: [MCP_PROTOCOL_VERSION],
-        requested: null,
-      })
+      refuseVersion(id, null)
       return
     }
 
@@ -263,7 +332,7 @@ export async function runBridge(opts: BridgeOptions): Promise<void> {
     const key = idKey(id)
     inFlight.set(key, controller)
     try {
-      const res = await opts.forward({body: line, headers, signal: controller.signal})
+      const res = await opts.forward({body: JSON.stringify(stamped), headers, signal: controller.signal})
       relay(id, res)
     } catch (err) {
       if (controller.signal.aborted) return
@@ -334,10 +403,11 @@ export async function runBridge(opts: BridgeOptions): Promise<void> {
       pending.add(task)
     })
     lines.on('close', resolve)
+    opts.shutdown?.addEventListener('abort', () => lines.close(), {once: true})
   })
 
-  // stdin closed: the client's graceful-shutdown signal. Let what is in flight
-  // finish so no answer is lost, then return so the process exits.
+  // Input closed or shutdown asked for. Let what is in flight finish so no
+  // answer is lost, then return so the process exits.
   await Promise.all(pending)
 }
 

@@ -13,6 +13,7 @@ import {
   RPC,
   sseMessages,
   transportHeaders,
+  withProtocolVersion,
 } from '../src/lib/mcp-bridge.js'
 
 const META = {'io.modelcontextprotocol/protocolVersion': '2026-07-28'}
@@ -110,6 +111,18 @@ describe('transportHeaders', () => {
   })
 })
 
+describe('withProtocolVersion', () => {
+  it('adds _meta without disturbing the rest of params', () => {
+    const stamped = withProtocolVersion({jsonrpc: '2.0', id: 1, method: 'tools/call', params: {name: 'x', arguments: {a: 1}}})
+    assert.deepEqual(stamped.params, {name: 'x', arguments: {a: 1}, _meta: {'io.modelcontextprotocol/protocolVersion': '2026-07-28'}})
+  })
+
+  it('keeps an existing _meta version', () => {
+    const message = request(1, 'tools/list')
+    assert.equal(withProtocolVersion(message), message)
+  })
+})
+
 describe('runBridge', () => {
   it('forwards a request body unchanged and relays the reply as one line', async () => {
     const reply = {jsonrpc: '2.0', id: 1, result: {resultType: 'complete', tools: []}}
@@ -182,21 +195,103 @@ describe('runBridge', () => {
     assert.equal(error.data.reason, 'timeout')
   })
 
-  it('answers a version-less request with -32022 naming the supported version, without forwarding', async () => {
-    const legacy = {jsonrpc: '2.0', id: 1, method: 'initialize', params: {protocolVersion: '2025-11-25'}}
-    const {out, calls} = await drive([JSON.stringify(legacy)], async () => okResponse({}))
-    assert.equal(calls.length, 0)
-    assert.deepEqual(out, [
-      {
+  describe('legacy-era shim', () => {
+    it('answers initialize locally, echoing the requested version, and notes it once on stderr', async () => {
+      const legacy = {jsonrpc: '2.0', id: 1, method: 'initialize', params: {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'claude-code', version: '2.1.0'}}}
+      const {out, err, calls} = await drive([JSON.stringify(legacy), JSON.stringify({...legacy, id: 2})], async () => okResponse({}))
+      assert.equal(calls.length, 0)
+      assert.deepEqual(out[0], {
         jsonrpc: '2.0',
         id: 1,
-        error: {
-          code: RPC.UNSUPPORTED_PROTOCOL_VERSION,
-          message: 'Unsupported protocol version',
-          data: {supported: ['2026-07-28'], requested: null},
+        result: {
+          protocolVersion: '2025-11-25',
+          capabilities: {tools: {}, resources: {}, prompts: {}},
+          serverInfo: {name: 'tediware', version: 'unknown'},
         },
+      })
+      assert.equal(out.length, 2)
+      assert.equal(err.match(/client requested protocol 2025-11-25/g)?.length, 1)
+    })
+
+    it('reports the CLI version as the server version', async () => {
+      const input = new PassThrough()
+      const output = new PassThrough()
+      let stdout = ''
+      output.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
+      const done = runBridge({input, output, forward: async () => okResponse({}), version: '0.4.0'})
+      input.write(JSON.stringify({jsonrpc: '2.0', id: 1, method: 'initialize', params: {}}) + '\n')
+      input.end()
+      await done
+      assert.equal((JSON.parse(stdout).result as {serverInfo: {version: string}}).serverInfo.version, '0.4.0')
+    })
+
+    it('swallows notifications/initialized silently and answers ping', async () => {
+      const {out, err, calls} = await drive(
+        [
+          JSON.stringify({jsonrpc: '2.0', method: 'notifications/initialized'}),
+          JSON.stringify({jsonrpc: '2.0', id: 'p', method: 'ping'}),
+        ],
+        async () => okResponse({}),
+      )
+      assert.equal(calls.length, 0)
+      assert.deepEqual(out, [{jsonrpc: '2.0', id: 'p', result: {}}])
+      assert.doesNotMatch(err, /dropped notification/)
+    })
+
+    it('stamps the platform protocol version into _meta on a version-less request and mirrors the header', async () => {
+      const legacy = {jsonrpc: '2.0', id: 3, method: 'tools/call', params: {name: 'x12_segment', arguments: {code: 'N1'}}}
+      const reply = {jsonrpc: '2.0', id: 3, result: {content: []}}
+      const {out, calls} = await drive([JSON.stringify(legacy)], async () => okResponse(reply))
+      assert.equal(calls.length, 1)
+      const sent = JSON.parse(calls[0]!.body) as {params: {_meta: Record<string, string>; arguments: unknown}}
+      assert.equal(sent.params._meta['io.modelcontextprotocol/protocolVersion'], '2026-07-28')
+      assert.deepEqual(sent.params.arguments, {code: 'N1'})
+      assert.equal(calls[0]!.headers['MCP-Protocol-Version'], '2026-07-28')
+      assert.equal(calls[0]!.headers['Mcp-Name'], 'x12_segment')
+      assert.deepEqual(out, [reply])
+    })
+
+    it('leaves a request that already names the platform version untouched', async () => {
+      const line = JSON.stringify(request(4, 'tools/list'))
+      const {calls} = await drive([line], async () => okResponse({jsonrpc: '2.0', id: 4, result: {}}))
+      assert.equal(calls[0]!.body, line)
+    })
+
+    it('refuses a request naming a different version, with the supported list, without forwarding', async () => {
+      const foreign = {jsonrpc: '2.0', id: 5, method: 'tools/list', params: {_meta: {'io.modelcontextprotocol/protocolVersion': '2027-01-01'}}}
+      const init = {jsonrpc: '2.0', id: 6, method: 'initialize', params: {protocolVersion: '2027-01-01', _meta: {'io.modelcontextprotocol/protocolVersion': '2027-01-01'}}}
+      const {out, calls} = await drive([JSON.stringify(foreign), JSON.stringify(init)], async () => okResponse({}))
+      assert.equal(calls.length, 0)
+      assert.deepEqual(out, [
+        {jsonrpc: '2.0', id: 5, error: {code: RPC.UNSUPPORTED_PROTOCOL_VERSION, message: 'Unsupported protocol version', data: {supported: ['2026-07-28'], requested: '2027-01-01'}}},
+        {jsonrpc: '2.0', id: 6, error: {code: RPC.UNSUPPORTED_PROTOCOL_VERSION, message: 'Unsupported protocol version', data: {supported: ['2026-07-28'], requested: '2027-01-01'}}},
+      ])
+    })
+  })
+
+  it('drains in-flight requests on shutdown, which is what the signal handlers ask for', {timeout: 5000}, async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const shutdown = new AbortController()
+    let stdout = ''
+    output.on('data', (chunk: Buffer) => (stdout += chunk.toString()))
+    const done = runBridge({
+      input,
+      output,
+      shutdown: shutdown.signal,
+      forward: async () => {
+        await gate
+        return okResponse({jsonrpc: '2.0', id: 'slow', result: {ok: true}})
       },
-    ])
+    })
+    input.write(JSON.stringify(request('slow', 'tools/list')) + '\n')
+    await new Promise((r) => setImmediate(r))
+    shutdown.abort()
+    setTimeout(release, 20)
+    await done
+    assert.deepEqual(JSON.parse(stdout), {jsonrpc: '2.0', id: 'slow', result: {ok: true}})
   })
 
   it('answers malformed input with parse and invalid-request errors on id null', async () => {
@@ -212,10 +307,10 @@ describe('runBridge', () => {
     )
   })
 
-  it('drops notifications and client responses without answering or forwarding', async () => {
+  it('drops other notifications and client responses without answering or forwarding', async () => {
     const {out, err, calls} = await drive(
       [
-        JSON.stringify({jsonrpc: '2.0', method: 'notifications/initialized'}),
+        JSON.stringify({jsonrpc: '2.0', method: 'notifications/roots/list_changed'}),
         JSON.stringify({jsonrpc: '2.0', id: 9, result: {}}),
         '',
       ],
@@ -223,7 +318,7 @@ describe('runBridge', () => {
     )
     assert.equal(calls.length, 0)
     assert.deepEqual(out, [])
-    assert.match(err, /dropped notification notifications\/initialized/)
+    assert.match(err, /dropped notification notifications\/roots\/list_changed/)
   })
 
   it('aborts an in-flight request on notifications/cancelled and writes nothing for it', {timeout: 5000}, async () => {
@@ -367,6 +462,15 @@ describe('httpForwarder', () => {
   })
 
   after(() => server.close())
+
+  it('preserves a path on the base URL and sends the User-Agent', async () => {
+    seen = []
+    const forward = httpForwarder({baseUrl: `${baseUrl}/prefix/`, token: 'sk-test', userAgent: 'tedi/0.0.0 (test)'})
+    const line = JSON.stringify(request(10, 'tools/list'))
+    await forward({body: line, headers: transportHeaders(JSON.parse(line))!, signal: new AbortController().signal})
+    assert.equal(seen[0]!.url, '/prefix/mcp')
+    assert.equal(seen[0]!.headers['user-agent'], 'tedi/0.0.0 (test)')
+  })
 
   it('POSTs to /mcp with the credential, Accept, and the mirrored transport headers', async () => {
     seen = []

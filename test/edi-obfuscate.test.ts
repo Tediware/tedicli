@@ -6,7 +6,10 @@ import {afterEach, beforeEach, describe, it} from 'node:test'
 
 import {runCommand} from '@oclif/test'
 
+import {Readable} from 'node:stream'
+
 import {
+  describeObfuscation,
   DifferentDelimitersError,
   MalformedIsaError,
   NotAnInterchangeError,
@@ -101,14 +104,21 @@ describe('obfuscateInterchange', () => {
     assert.equal(nm109, ref1w)
   })
 
-  it('obfuscates addresses, keeps state, keeps first 3 ZIP digits', () => {
+  it('obfuscates addresses under a person, keeps state, keeps first 3 ZIP digits', () => {
     assert.ok(!out.includes('42 ELM STREET'))
-    assert.ok(!out.includes('100 MAIN ST'))
     const n4 = segment(out, 'N4', 1)
     assert.notEqual(n4[1], 'SPRINGFIELD')
     assert.equal(n4[2], 'IL')
     assert.match(n4[3], /^627\d{2}$/)
     assert.notEqual(n4[3], '62701')
+  })
+
+  it('keeps the address under an organization: addresses follow the party', () => {
+    // ACME CLINIC is NM1*85*2, an organization. Its street and city are what a
+    // reader debugging the file needs, and nothing personal was in them.
+    assert.ok(out.includes('N3*100 MAIN ST'))
+    assert.equal(segment(out, 'N4', 0)[1], 'SPRINGFIELD')
+    assert.equal(segment(out, 'N4', 0)[3], '627011234')
   })
 
   it('keeps the DOB year, replaces month/day with a valid date', () => {
@@ -411,15 +421,149 @@ describe('edi obfuscate command', () => {
     assert.ok(!written.includes('MBR123456789'))
   })
 
-  it('fails clearly when the file does not exist', async () => {
+  it('fails clearly when the file does not exist, naming the path and the reason', async () => {
     const {error} = await run(['edi', 'obfuscate', join(dir, 'nope.edi')])
-    assert.match(error?.message ?? '', /File not found/)
+    assert.match(error?.message ?? '', /Cannot read .*nope\.edi: no such file or directory/)
+    assert.equal((error as {oclif?: {exit?: number}})?.oclif?.exit, EXIT_UNUSABLE)
   })
 
-  it('fails clearly on a non-EDI file', async () => {
+  it('fails on a non-EDI file with exit 1: a finding about the input', async () => {
     const file = join(dir, 'notes.txt')
     await writeFile(file, 'just some text', 'utf8')
     const {error} = await run(['edi', 'obfuscate', file])
     assert.match(error?.message ?? '', /doesn't look like an X12 interchange/)
+    assert.equal((error as {oclif?: {exit?: number}})?.oclif?.exit, EXIT_DEFECT)
+  })
+
+  it('reads stdin when the file argument is omitted on a pipe', async () => {
+    const realStdin = process.stdin
+    Object.defineProperty(process, 'stdin', {value: Readable.from([Buffer.from(INTERCHANGE, 'latin1')]), configurable: true})
+    try {
+      const {stdout, error} = await run(['edi', 'obfuscate', '--seed', 's'])
+      assert.equal(error, undefined)
+      assert.ok(stdout.startsWith('ISA*00*'))
+      assert.ok(!stdout.includes('MBR123456789'))
+    } finally {
+      Object.defineProperty(process, 'stdin', {value: realStdin, configurable: true})
+    }
+  })
+
+  it('round-trips Latin-1 bytes untouched and keeps byte lengths', async () => {
+    // \xc9 is E-acute in Latin-1 and not valid UTF-8 on its own. Read as UTF-8
+    // it became a three-byte replacement character, growing the file and
+    // shifting every fixed-width field after it.
+    const file = join(dir, 'latin1.edi')
+    const outFile = join(dir, 'latin1.out.edi')
+    const bytes = Buffer.from(INTERCHANGE.replace('ACME CLINIC', 'CAF\u00c9 CLINIC').replace('DOE*JANE', 'DO\u00c9*JANE'), 'latin1')
+    await writeFile(file, bytes)
+    const {error} = await run(['edi', 'obfuscate', file, '--seed', 's', '-o', outFile])
+    assert.equal(error, undefined)
+    const written = await readFile(outFile)
+    assert.equal(written.length, bytes.length)
+    // The organization name is kept byte for byte, accent included.
+    assert.ok(written.includes(Buffer.from('CAF\u00c9 CLINIC', 'latin1')))
+    // The person name was scrubbed; the non-ASCII byte passes through in place.
+    assert.ok(!written.includes(Buffer.from('DO\u00c9*JANE', 'latin1')))
+  })
+
+  it('round-trips a UTF-8 file as UTF-8, keeping accented business names intact', async () => {
+    const file = join(dir, 'utf8.edi')
+    const outFile = join(dir, 'utf8.out.edi')
+    const text = INTERCHANGE.replace('ACME CLINIC', 'CAF\u00c9 CLINIC')
+    await writeFile(file, text, 'utf8')
+    const {error} = await run(['edi', 'obfuscate', file, '--seed', 's', '-o', outFile])
+    assert.equal(error, undefined)
+    const written = await readFile(outFile, 'utf8')
+    assert.ok(written.includes('CAF\u00c9 CLINIC'))
+    assert.ok(!written.includes('\u00c3'))
+    assert.equal(Buffer.byteLength(written, 'utf8'), Buffer.byteLength(text, 'utf8'))
+  })
+
+  it('treats an empty --seed as no seed', async () => {
+    const file = join(dir, 'in.edi')
+    await writeFile(file, INTERCHANGE, 'utf8')
+    const a = await run(['edi', 'obfuscate', file, '--seed='])
+    const b = await run(['edi', 'obfuscate', file, '--seed='])
+    assert.equal(a.error, undefined)
+    assert.notEqual(a.stdout, b.stdout)
+  })
+})
+
+describe('scrub policy', () => {
+  // A supply-chain 850: organizations, a ship-to, free text. No person segment
+  // anywhere, so the defaults keep what a supplier debugging it needs.
+  const PO = [
+    SEGMENTS[0],
+    'GS*PO*SENDERID*RECEIVERID*20240101*1200*1*X*005010',
+    'ST*850*0001',
+    'BEG*00*SA*PO12345**20240101',
+    'MSG*NET 30 TERMS SEE HTTP://EXAMPLE.COM/TERMS',
+    'N1*BT*BIG RETAILER INC*92*0001',
+    'N3*1 CORPORATE WAY',
+    'N4*METROPOLIS*NY*10001',
+    'N1*ST*JOHN Q SMITH*92*0002',
+    'N3*9 QUIET LANE',
+    'N4*SMALLVILLE*KS*66002',
+    'PER*DC*JOHN SMITH*TE*7855550100',
+    'MTX*GEN*LEAVE AT SIDE DOOR',
+    'SE*12*0001',
+    'GE*1*1',
+    'IEA*1*000000001',
+  ].join('~\n') + '~\n'
+
+  it('keeps business parties, their addresses and free text on a purchase order by default', () => {
+    const {output} = obfuscateInterchange(PO, {seed: 's'})
+    assert.ok(output.includes('N1*ST*JOHN Q SMITH'))
+    assert.ok(output.includes('N3*9 QUIET LANE'))
+    assert.ok(output.includes('N4*SMALLVILLE*KS*66002'))
+    assert.ok(output.includes('MSG*NET 30 TERMS SEE HTTP://EXAMPLE.COM/TERMS'))
+    assert.ok(output.includes('MTX*GEN*LEAVE AT SIDE DOOR'))
+    // Contact details are a person's whichever party they work for.
+    assert.ok(!output.includes('7855550100'))
+  })
+
+  it('--scrub-parties treats ST and BT as persons and scrubs name, address and contact together', () => {
+    const {output} = obfuscateInterchange(PO, {seed: 's', scrubParties: true})
+    assert.ok(!output.includes('JOHN Q SMITH'))
+    assert.ok(!output.includes('9 QUIET LANE'))
+    assert.ok(!output.includes('N4*SMALLVILLE'))
+    assert.ok(!output.includes('BIG RETAILER INC'))
+    assert.ok(!output.includes('1 CORPORATE WAY'))
+    // State codes and lengths survive.
+    assert.match(segment(output, 'N4', 1).join('*'), /^N4\*[A-Z]{10}\*KS\*660\d{2}$/)
+    // Free text is still kept: parties and text are separate decisions.
+    assert.ok(output.includes('MSG*NET 30 TERMS'))
+  })
+
+  it('--scrub-text scrubs MSG, MTX, NTE and K3 on any document', () => {
+    const {output} = obfuscateInterchange(PO, {seed: 's', scrubText: true})
+    assert.ok(!output.includes('NET 30 TERMS'))
+    assert.ok(!output.includes('LEAVE AT SIDE DOOR'))
+    assert.ok(output.includes('N1*ST*JOHN Q SMITH'))
+  })
+
+  it('scrubs free text by default when the interchange carries a person segment', () => {
+    // The 837 above has NM1*IL*1 and CLM; its NTE is scrubbed with no flag.
+    assert.ok(!obfuscateInterchange(INTERCHANGE, {seed: 's'}).output.includes('PATIENT CALLED'))
+    const withDmg = PO.replace('BEG*00*SA*PO12345**20240101', 'DMG*D8*19800101*M')
+    assert.ok(!obfuscateInterchange(withDmg, {seed: 's'}).output.includes('NET 30 TERMS'))
+  })
+
+  it('resets the party at each transaction set', () => {
+    const two = PO.replace('SE*12*0001', 'SE*12*0001~\nST*850*0002~\nN3*ORPHAN STREET~\nSE*3*0002')
+    const {output} = obfuscateInterchange(two, {seed: 's', scrubParties: true})
+    assert.ok(output.includes('N3*ORPHAN STREET'))
+  })
+
+  it('pluralizes the summary', () => {
+    assert.equal(describeObfuscation({output: '', valuesObfuscated: 1, segmentCount: 1}), 'Obfuscated 1 value across 1 segment')
+    assert.equal(describeObfuscation({output: '', valuesObfuscated: 2, segmentCount: 3}), 'Obfuscated 2 values across 3 segments')
+  })
+
+  it('preserves a UTF-8 byte-order mark read as latin1', () => {
+    const bom = Buffer.from([0xef, 0xbb, 0xbf]).toString('latin1')
+    const {output} = obfuscateInterchange(bom + INTERCHANGE, {seed: 's'})
+    assert.ok(output.startsWith(bom))
+    assert.equal(output.length, bom.length + INTERCHANGE.length)
   })
 })
