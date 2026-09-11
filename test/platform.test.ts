@@ -250,6 +250,21 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(stdout, /Details: tedi trace mock-trace-failing/)
   })
 
+  it('partner send --wait exits 2 when the trace is still processing at the deadline', async () => {
+    const file = join(dir, 'order.json')
+    await writeFile(file, JSON.stringify({po: '123'}), 'utf8')
+    process.env.TEDI_WAIT_INTERVAL_MS = '10'
+    process.env.TEDI_WAIT_TIMEOUT_MS = '30'
+    try {
+      const {error, exit} = await run(['partner', 'send', 'HANGING', '850', file, '--wait'])
+      assert.equal(exit, 2)
+      assert.match(error?.message ?? '', /Trace mock-trace-hanging is still processing after 0\.03s/)
+    } finally {
+      delete process.env.TEDI_WAIT_INTERVAL_MS
+      delete process.env.TEDI_WAIT_TIMEOUT_MS
+    }
+  })
+
   it('empty ids exit 2 before any request is made', async () => {
     for (const args of [
       ['partner', 'get', ' '],

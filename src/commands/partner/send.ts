@@ -10,6 +10,19 @@ import {errorLines} from '../../lib/render.js'
 export const WAIT_INTERVAL_MS = 2000
 export const WAIT_TIMEOUT_MS = 60_000
 
+/**
+ * The timing `--wait` runs with. The defaults above are what `--help`
+ * documents; TEDI_WAIT_INTERVAL_MS and TEDI_WAIT_TIMEOUT_MS override them so
+ * the timeout path is testable without a minute of polling.
+ */
+export function waitTiming(): {intervalMs: number; timeoutMs: number} {
+  const fromEnv = (name: string, fallback: number) => {
+    const n = Number(process.env[name])
+    return Number.isFinite(n) && n > 0 ? n : fallback
+  }
+  return {intervalMs: fromEnv('TEDI_WAIT_INTERVAL_MS', WAIT_INTERVAL_MS), timeoutMs: fromEnv('TEDI_WAIT_TIMEOUT_MS', WAIT_TIMEOUT_MS)}
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export default class PartnerSend extends PlatformCommand<typeof PartnerSend> {
@@ -79,10 +92,11 @@ The receipt means the document was accepted and queued. Validation and delivery 
    * time says nothing about the document, so it exits 2 and names the trace.
    */
   private async waitForTrace(client: Awaited<ReturnType<PlatformCommand<typeof PartnerSend>['getAuthedClient']>>, guid: string): Promise<TraceDetail> {
-    const deadline = Date.now() + WAIT_TIMEOUT_MS
-    if (!this.jsonEnabled()) this.logToStderr(`Waiting for trace ${guid} (polling every ${WAIT_INTERVAL_MS / 1000}s, up to ${WAIT_TIMEOUT_MS / 1000}s)...`)
+    const {intervalMs, timeoutMs} = waitTiming()
+    const deadline = Date.now() + timeoutMs
+    if (!this.jsonEnabled()) this.logToStderr(`Waiting for trace ${guid} (polling every ${intervalMs / 1000}s, up to ${timeoutMs / 1000}s)...`)
     for (;;) {
-      await sleep(WAIT_INTERVAL_MS)
+      await sleep(intervalMs)
       const trace = await client.traceGet(guid)
       if (!trace.processing) {
         const errored = trace.results.find((r) => r.status === 'error')
@@ -97,7 +111,7 @@ The receipt means the document was accepted and queued. Validation and delivery 
         return trace
       }
       if (Date.now() >= deadline) {
-        throw new TediError(`Trace ${guid} is still processing after ${WAIT_TIMEOUT_MS / 1000}s.`, {
+        throw new TediError(`Trace ${guid} is still processing after ${timeoutMs / 1000}s.`, {
           suggestions: [`Check it later with \`tedi trace ${guid}\`.`],
         })
       }

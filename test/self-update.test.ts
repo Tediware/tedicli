@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import {mkdir, mkdtemp, rm, symlink, writeFile} from 'node:fs/promises'
+import {tmpdir} from 'node:os'
+import {join} from 'node:path'
 import {describe, it} from 'node:test'
 
-import {npmInstallArgs, PACKAGE_NAME, selfUpdate} from '../src/lib/self-update.js'
+import {assertUpdatable, globalPackageDir, npmInstallArgs, PACKAGE_NAME, selfUpdate} from '../src/lib/self-update.js'
 
 describe('npmInstallArgs', () => {
   it('installs the latest version by default', () => {
@@ -54,5 +57,39 @@ describe('selfUpdate', () => {
       }),
       /Could not run npm/,
     )
+  })
+})
+
+describe('assertUpdatable', () => {
+  it('accepts a binary under a global prefix that is itself a symlink', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tedi-update-'))
+    try {
+      const realPrefix = join(dir, 'real')
+      const linkedPrefix = join(dir, 'linked')
+      const bin = join(globalPackageDir(realPrefix, PACKAGE_NAME, 'darwin'), 'bin', 'run.js')
+      await mkdir(join(bin, '..'), {recursive: true})
+      await writeFile(bin, '', 'utf8')
+      await symlink(realPrefix, linkedPrefix)
+      // npm reports the prefix as invoked (the symlink); the binary resolves
+      // under the real directory. Both sides must be resolved to compare.
+      await assertUpdatable({argv1: bin, capture: async () => linkedPrefix, platform: 'darwin'})
+    } finally {
+      await rm(dir, {recursive: true, force: true})
+    }
+  })
+
+  it('still refuses a binary outside the prefix', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tedi-update-'))
+    try {
+      const bin = join(dir, 'checkout', 'bin', 'run.js')
+      await mkdir(join(bin, '..'), {recursive: true})
+      await writeFile(bin, '', 'utf8')
+      await assert.rejects(
+        assertUpdatable({argv1: bin, capture: async () => join(dir, 'prefix'), platform: 'darwin'}),
+        /cannot update this copy/,
+      )
+    } finally {
+      await rm(dir, {recursive: true, force: true})
+    }
   })
 })

@@ -90,6 +90,14 @@ export function describeForeignInstall(
   return `it runs from ${real}, but npm's global prefix is ${prefix} and it would install into ${expected}`
 }
 
+const resolveReal = async (path: string): Promise<string> => {
+  try {
+    return await realpath(path)
+  } catch {
+    return resolve(path)
+  }
+}
+
 /**
  * Refuse to update a binary that npm did not install where it is running from.
  * Injectable so tests need neither npm nor a global install.
@@ -104,12 +112,7 @@ export async function assertUpdatable(opts: {
   const argv1 = opts.argv1 ?? process.argv[1] ?? ''
   const capture = opts.capture ?? defaultCapture
 
-  let real: string
-  try {
-    real = await realpath(argv1)
-  } catch {
-    real = resolve(argv1)
-  }
+  const real = await resolveReal(argv1)
 
   let prefix: string
   try {
@@ -120,7 +123,9 @@ export async function assertUpdatable(opts: {
     })
   }
 
-  const why = describeForeignInstall(argv1, real, prefix, pkgName, opts.platform)
+  // Both sides resolved, so a prefix that is itself a symlink (Homebrew on
+  // some layouts) compares equal to the binary's real location under it.
+  const why = describeForeignInstall(argv1, real, await resolveReal(prefix), pkgName, opts.platform)
   if (why) {
     throw new TediError(`tedi update cannot update this copy: ${why}.`, {
       suggestions: [

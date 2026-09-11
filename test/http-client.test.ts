@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {afterEach, describe, it} from 'node:test'
 
-import {CodeLimit, HttpApiClient, MAX_INSPECT_BYTES} from '../src/lib/api-client.js'
+import {CodeLimit, HttpApiClient, MAX_INSPECT_BYTES, retryAfterSeconds} from '../src/lib/api-client.js'
 import {
   AccountUnavailableError,
   EdiTooLargeError,
@@ -223,6 +223,20 @@ describe('HttpApiClient', () => {
         assert.ok(err instanceof RateLimitedError)
         assert.equal(err.retryAfterSeconds, 42)
         assert.match(err.message, /42s/)
+        return true
+      })
+    })
+
+    it('reads an HTTP-date Retry-After against the clock', async () => {
+      const at = new Date(Date.now() + 90_000).toUTCString()
+      stubFetch(() => ({
+        status: 429,
+        headers: {'retry-after': at},
+        body: JSON.stringify({error: {message: 'slow down', code: 'rate_limited'}}),
+      }))
+      await assert.rejects(client('sk-test').x12Segment('N1', req()), (err: unknown) => {
+        assert.ok(err instanceof RateLimitedError)
+        assert.ok(err.retryAfterSeconds !== undefined && err.retryAfterSeconds >= 89 && err.retryAfterSeconds <= 90)
         return true
       })
     })
@@ -794,5 +808,26 @@ describe('HttpApiClient', () => {
       assert.equal(receipt.traceGuid, 'trace-1')
       assert.equal(receipt.ediTransactionId, 'txn-1')
     })
+  })
+})
+
+describe('retryAfterSeconds', () => {
+  const now = Date.UTC(2026, 8, 11, 12, 0, 0)
+
+  it('reads delta-seconds as sent', () => {
+    assert.equal(retryAfterSeconds('42', now), 42)
+    assert.equal(retryAfterSeconds(' 7 ', now), 7)
+  })
+
+  it('reads an HTTP-date against the clock, rounded up, never negative', () => {
+    assert.equal(retryAfterSeconds('Fri, 11 Sep 2026 12:00:30 GMT', now), 30)
+    assert.equal(retryAfterSeconds('Fri, 11 Sep 2026 11:59:00 GMT', now), 0)
+  })
+
+  it('gives no hint for a missing or unreadable header', () => {
+    assert.equal(retryAfterSeconds(null, now), undefined)
+    assert.equal(retryAfterSeconds('', now), undefined)
+    assert.equal(retryAfterSeconds('soon', now), undefined)
+    assert.equal(retryAfterSeconds('-5', now), undefined)
   })
 })

@@ -514,14 +514,16 @@ export class MockApiClient implements ApiClient {
 
   async partnerSend(key: string): Promise<PartnerSendReceipt> {
     this.requireToken()
-    // The FAILING partner's trace ends in a validation error, so the --wait
-    // exit-1 path is exercisable against the mock.
-    const failing = key.toUpperCase() === 'FAILING'
+    // The FAILING partner's trace ends in a validation error and the HANGING
+    // partner's never finishes, so both --wait exit paths are exercisable
+    // against the mock.
+    const upper = key.toUpperCase()
+    const traceGuid = upper === 'FAILING' ? MOCK_FAILING_TRACE : upper === 'HANGING' ? MOCK_HANGING_TRACE : 'mock-trace-outbound'
     return {
       interchangeControlNumber: '000000001',
       groupControlNumber: '000000001',
-      traceGuid: failing ? MOCK_FAILING_TRACE : 'mock-trace-outbound',
-      ediTransactionId: failing ? 'mock-txn-3' : 'mock-txn-2',
+      traceGuid,
+      ediTransactionId: upper === 'FAILING' ? 'mock-txn-3' : 'mock-txn-2',
     }
   }
 
@@ -532,6 +534,9 @@ export class MockApiClient implements ApiClient {
 
   async traceGet(guid: string): Promise<TraceDetail> {
     this.requireToken()
+    if (guid === MOCK_HANGING_TRACE) {
+      return {traceGuid: guid, processing: true, ediTransactions: [], results: [], feedEntries: [], logs: [], artifacts: []}
+    }
     const transactions = MOCK_TRANSACTIONS.filter((t) => t.traceGuid === guid)
     const results = [...MOCK_RESULTS, MOCK_FAILED_RESULT].filter((r) => r.traceGuid === guid)
     if (transactions.length === 0 && results.length === 0) throw new DataNotFoundError('trace', guid)
@@ -800,6 +805,7 @@ const MOCK_IMPLEMENTATIONS: ImplementationPage['implementations'] = [
   {id: 'mock-impl-2', name: 'Acme 850', version: '1', status: 'draft', transactionSet: {identifier: '850', release: '004010'}, sourceImplementation: {id: 'mock-public-1', name: 'Public 850'}, segmentUseCount: 20, loopUseCount: 4},
 ]
 const MOCK_FAILING_TRACE = 'mock-trace-failing'
+const MOCK_HANGING_TRACE = 'mock-trace-hanging'
 
 const MOCK_TRANSACTIONS: TransactionSummary[] = [
   {
@@ -1060,6 +1066,23 @@ const INSPECTION_COMPLETE_HEADER = 'x-edi-inspection-complete'
 function readCount(raw: string | null): number | undefined {
   if (raw === null || !/^\d+$/.test(raw.trim())) return undefined
   return Number(raw.trim())
+}
+
+/**
+ * The wait a 429's Retry-After asks for, in whole seconds. Tediware sends
+ * delta-seconds; a proxy may rewrite the header into the HTTP-date form, which
+ * is read against the clock. Unknown shapes mean no hint, never a wrong one.
+ */
+export function retryAfterSeconds(raw: string | null, now: number = Date.now()): number | undefined {
+  if (raw === null) return undefined
+  const value = raw.trim()
+  if (/^\d+$/.test(value)) return Number(value)
+  // An HTTP-date starts with a weekday name; Date.parse alone reads far too
+  // much (a bare "-5" parses as a year).
+  if (!/^[A-Za-z]/.test(value)) return undefined
+  const at = Date.parse(value)
+  if (Number.isNaN(at)) return undefined
+  return Math.max(0, Math.ceil((at - now) / 1000))
 }
 
 /**
@@ -1345,11 +1368,8 @@ export class HttpApiClient implements ApiClient {
         if (ctx.missing) throw ctx.missing()
         throw new NoSuchEndpointError(this.base)
       }
-      case 429: {
-        const header = res.headers.get('retry-after')
-        const retry = header === null ? undefined : Number(header)
-        throw new RateLimitedError(Number.isFinite(retry) ? retry : undefined)
-      }
+      case 429:
+        throw new RateLimitedError(retryAfterSeconds(res.headers.get('retry-after')))
       default:
         break
     }
