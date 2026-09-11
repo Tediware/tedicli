@@ -288,6 +288,30 @@ tedi feed list --follow              # tail it live (JSONL with --json)
 tedi artifact get <id> -o file.edi   # download stored document bytes
 ```
 
+The rest of your configuration reads the same way, by id. Every `list` has
+`--json`, and every `{id, name}` reference in one command's output is an id the
+next command takes:
+
+```bash
+tedi connection list                 # SFTP, AS2 and sandbox connections; get <id> adds the partners on it
+tedi envelope list                   # ISA and GS identifiers; get <id> adds who uses it, as internal or external
+tedi webhook list                    # URLs and kinds; get <id> adds who delivers to it, in which role
+tedi flow list --partner ACME --status active
+tedi flow get <id>                   # nodes and edges, no node configuration
+
+tedi mapping list --direction outbound
+tedi mapping get <id>                # what it targets and reads from, and the transformation
+tedi mapping get <id> -o map.jsonata # the transformation alone, to edit and diff
+tedi mapping versions <id>           # every version; mapping get --version <n> reads one
+
+tedi implementation list --set 850   # your own implementations (public ones are imported in the app)
+tedi implementation schema <id>      # the JSON shape a mapping targets
+tedi implementation guide <id> --format markdown -o acme-850.md
+tedi implementation export <id> -o acme-850.json   # the portable file the import endpoint accepts
+
+tedi source-schema list              # the shapes you send, and the mappings reading each
+```
+
 Every receipt (`partner send`, `partner receive`, `transaction resend`) ends
 with the `tedi trace <guid>` line to follow it with. Direction is always
 `inbound` (received from a partner) or `outbound` (sent to one); `--set` names a

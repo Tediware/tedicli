@@ -78,11 +78,26 @@
       "config": {
         "description": "Read and write local tedi configuration."
       },
+      "connection": {
+        "description": "Your SFTP, AS2 and sandbox connections, and the partners on each. Read-only."
+      },
       "edi": {
         "description": "Work with your own EDI files: obfuscate personal data locally, or inspect an interchange."
       },
+      "envelope": {
+        "description": "Your envelopes: the ISA and GS identifiers on each side of a partnership. Read-only."
+      },
       "feed": {
         "description": "The feed of delivered documents and errors across your organization, oldest first."
+      },
+      "flow": {
+        "description": "Your flows: status, schedule, and the graph of nodes each runs. Read-only."
+      },
+      "implementation": {
+        "description": "Your own implementations: the schema a mapping targets, the guide, the portable export. Read-only."
+      },
+      "mapping": {
+        "description": "Your mappings: what each targets and reads from, its versions, and the transformation. Read-only."
       },
       "mcp": {
         "description": "Connect an AI agent to Tediware over the Model Context Protocol."
@@ -92,6 +107,9 @@
       },
       "result": {
         "description": "Processing results: one node's work on one document, with its error and artifacts."
+      },
+      "source-schema": {
+        "description": "The declared shapes of the JSON you send, and the mappings reading each. Read-only."
       },
       "transaction": {
         "description": "EDI transactions: the documents sent to and received from partners, with their envelopes and outcomes."

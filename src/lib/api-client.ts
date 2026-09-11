@@ -44,10 +44,25 @@ import {fetchWithTimeout, FetchOptions} from './http.js'
 import {
   applyQuery,
   ArtifactContent,
+  ConnectionDetail,
+  ConnectionPage,
+  EnvelopeDetail,
+  EnvelopePage,
   FeedPage,
   FeedQuery,
+  FlowDetail,
+  FlowListQuery,
+  FlowPage,
+  ImplementationDetail,
+  ImplementationListQuery,
+  ImplementationPage,
   LogPage,
   LogQuery,
+  MappingDetail,
+  MappingListQuery,
+  MappingPage,
+  MappingVersion,
+  MappingVersionPage,
   PartnerDetail,
   PartnerPage,
   PartnerReceiveReceipt,
@@ -57,11 +72,15 @@ import {
   ResendReceipt,
   ResultListQuery,
   ResultPage,
+  SourceSchemaDetail,
+  SourceSchemaPage,
   TraceDetail,
   TransactionDetail,
   TransactionListQuery,
   TransactionPage,
   TransactionSummary,
+  WebhookDetail,
+  WebhookPage,
 } from './platform.js'
 
 /**
@@ -179,6 +198,28 @@ export interface ApiClient {
   partnerSend(key: string, code: string, contents: unknown, filename?: string): Promise<PartnerSendReceipt>
   partnerReceive(key: string, contents: string, filename?: string): Promise<PartnerReceiveReceipt>
   traceGet(guid: string): Promise<TraceDetail>
+  connectionList(query: PageQuery): Promise<ConnectionPage>
+  connectionGet(id: string): Promise<ConnectionDetail>
+  envelopeList(query: PageQuery): Promise<EnvelopePage>
+  envelopeGet(id: string): Promise<EnvelopeDetail>
+  webhookList(query: PageQuery): Promise<WebhookPage>
+  webhookGet(id: string): Promise<WebhookDetail>
+  flowList(query: FlowListQuery): Promise<FlowPage>
+  flowGet(id: string): Promise<FlowDetail>
+  mappingList(query: MappingListQuery): Promise<MappingPage>
+  mappingGet(id: string): Promise<MappingDetail>
+  mappingVersions(id: string, query: PageQuery): Promise<MappingVersionPage>
+  mappingVersion(id: string, number: number): Promise<MappingVersion>
+  implementationList(query: ImplementationListQuery): Promise<ImplementationPage>
+  implementationGet(id: string): Promise<ImplementationDetail>
+  /** The JSON schema a mapping targets, as parsed JSON. */
+  implementationSchema(id: string): Promise<unknown>
+  /** The rendered guide: presentation only, like the reference. */
+  implementationGuide(id: string, format: OutputFormat): Promise<string>
+  /** The portable export the import endpoint accepts, as parsed JSON. */
+  implementationExport(id: string): Promise<unknown>
+  sourceSchemaList(query: PageQuery): Promise<SourceSchemaPage>
+  sourceSchemaGet(id: string): Promise<SourceSchemaDetail>
 }
 
 export interface ApiClientOptions {
@@ -504,11 +545,260 @@ export class MockApiClient implements ApiClient {
       artifacts: results.flatMap((r) => (r.detail.artifacts ?? []).map((a) => ({...a, resultId: r.id, nodeName: r.nodeName}))),
     }
   }
+
+  // --- The rest of the read-only control plane ------------------------------
+
+  async connectionList(query: PageQuery): Promise<ConnectionPage> {
+    this.requireToken()
+    return {connections: MOCK_CONNECTIONS.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+  }
+
+  async connectionGet(id: string): Promise<ConnectionDetail> {
+    this.requireToken()
+    if (id !== MOCK_CONNECTION_DETAIL.id) throw new DataNotFoundError('connection', id)
+    return MOCK_CONNECTION_DETAIL
+  }
+
+  async envelopeList(query: PageQuery): Promise<EnvelopePage> {
+    this.requireToken()
+    return {envelopes: MOCK_ENVELOPES.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+  }
+
+  async envelopeGet(id: string): Promise<EnvelopeDetail> {
+    this.requireToken()
+    const row = MOCK_ENVELOPES.find((e) => e.id === id)
+    if (!row) throw new DataNotFoundError('envelope', id)
+    return {
+      ...row,
+      segmentSeparator: '~',
+      elementSeparator: '*',
+      componentSeparator: '>',
+      partners: [{...MOCK_PARTNER_REF, role: row.external ? 'external' : 'internal'}],
+    }
+  }
+
+  async webhookList(query: PageQuery): Promise<WebhookPage> {
+    this.requireToken()
+    return {webhooks: MOCK_WEBHOOKS.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+  }
+
+  async webhookGet(id: string): Promise<WebhookDetail> {
+    this.requireToken()
+    const row = MOCK_WEBHOOKS.find((w) => w.id === id)
+    if (!row) throw new DataNotFoundError('webhook', id)
+    return {...row, contentType: 'application/json', partners: [{...MOCK_PARTNER_REF, role: 'inbound'}]}
+  }
+
+  async flowList(query: FlowListQuery): Promise<FlowPage> {
+    this.requireToken()
+    let rows = MOCK_FLOWS
+    if (query.partner && query.partner.toUpperCase() !== MOCK_PARTNER_REF.key) rows = []
+    if (query.direction) rows = rows.filter((f) => f.direction === query.direction)
+    if (query.status) rows = rows.filter((f) => f.status === query.status)
+    return {flows: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+  }
+
+  async flowGet(id: string): Promise<FlowDetail> {
+    this.requireToken()
+    const row = MOCK_FLOWS.find((f) => f.id === id)
+    if (!row) throw new DataNotFoundError('flow', id)
+    return {
+      ...row,
+      nodes: [
+        {id: 'mock-node-1', name: 'Partner endpoint', kind: 'input', service: 'partner_endpoint'},
+        {id: 'mock-node-2', name: 'Acme 856 mapping', kind: 'transformation', service: 'mapping'},
+        {id: 'mock-node-3', name: 'Upload', kind: 'output', service: 'sftp_upload'},
+      ],
+      connections: [
+        {from: 'mock-node-1', to: 'mock-node-2'},
+        {from: 'mock-node-2', to: 'mock-node-3'},
+      ],
+    }
+  }
+
+  async mappingList(query: MappingListQuery): Promise<MappingPage> {
+    this.requireToken()
+    let rows = MOCK_MAPPINGS
+    if (query.partner && query.partner.toUpperCase() !== MOCK_PARTNER_REF.key) rows = []
+    if (query.direction) rows = rows.filter((m) => m.direction === query.direction)
+    return {mappings: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+  }
+
+  async mappingGet(id: string): Promise<MappingDetail> {
+    this.requireToken()
+    const row = MOCK_MAPPINGS.find((m) => m.id === id)
+    if (!row) throw new DataNotFoundError('mapping', id)
+    return {
+      ...row,
+      description: 'Ships to Acme.',
+      tags: [],
+      sourceSchema: row.sourceSchema ? MOCK_SOURCE_SCHEMA : null,
+      current: MOCK_MAPPING_VERSIONS[MOCK_MAPPING_VERSIONS.length - 1] ?? null,
+    }
+  }
+
+  async mappingVersions(id: string, query: PageQuery): Promise<MappingVersionPage> {
+    this.requireToken()
+    if (!MOCK_MAPPINGS.some((m) => m.id === id)) throw new DataNotFoundError('mapping', id)
+    const versions = MOCK_MAPPING_VERSIONS.map(({versionNumber, note, createdAt, createdBy}) => ({
+      versionNumber: versionNumber as number,
+      note,
+      createdAt,
+      createdBy,
+    }))
+    return {versions: versions.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+  }
+
+  async mappingVersion(id: string, number: number): Promise<MappingVersion> {
+    this.requireToken()
+    if (!MOCK_MAPPINGS.some((m) => m.id === id)) throw new DataNotFoundError('mapping', id)
+    const version = MOCK_MAPPING_VERSIONS.find((v) => v.versionNumber === number)
+    if (!version) {
+      // Same sentence and hint the HTTP client derives from a
+      // reason: "mapping_version" 404.
+      throw new TediError(`No version ${number} of mapping ${id}.`, {
+        exitCode: EXIT_DEFECT,
+        code: 'not_found',
+        suggestions: [`Run \`tedi mapping versions ${id}\` to list its versions.`],
+      })
+    }
+    return version
+  }
+
+  async implementationList(query: ImplementationListQuery): Promise<ImplementationPage> {
+    this.requireToken()
+    let rows = MOCK_IMPLEMENTATIONS
+    if (query.transactionSetIdentifier) {
+      rows = rows.filter((i) => i.transactionSet.identifier === query.transactionSetIdentifier)
+    }
+    return {implementations: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+  }
+
+  async implementationGet(id: string): Promise<ImplementationDetail> {
+    this.requireToken()
+    const row = MOCK_IMPLEMENTATIONS.find((i) => i.id === id)
+    if (!row) throw new DataNotFoundError('implementation', id)
+    return {...row, description: 'Acme ship notice.', tags: [], mappings: [], partners: [MOCK_PARTNER_REF]}
+  }
+
+  async implementationSchema(id: string): Promise<unknown> {
+    this.requireToken()
+    if (!MOCK_IMPLEMENTATIONS.some((i) => i.id === id)) throw new DataNotFoundError('implementation', id)
+    return {
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      type: 'object',
+      additionalProperties: false,
+      properties: {heading: {type: 'object'}, detail: {type: 'object'}},
+      required: ['heading'],
+    }
+  }
+
+  async implementationGuide(id: string, format: OutputFormat): Promise<string> {
+    this.requireToken()
+    if (!MOCK_IMPLEMENTATIONS.some((i) => i.id === id)) throw new DataNotFoundError('implementation', id)
+    // Invented placeholder structure, deliberately not real X12 content.
+    return format === 'markdown'
+      ? '# Acme 856 (v1)\n\nTransaction set: SH856 - Ship Notice\nRelease: 004010\n\n## Heading\n\n- 0100 **BSN** (Required) - Beginning Segment\n'
+      : 'Acme 856 (v1)\nTransaction Set: SH856 - Ship Notice\nRelease: 004010\n\nHeading\n\nR  BSN - Beginning Segment\n'
+  }
+
+  async implementationExport(id: string): Promise<unknown> {
+    this.requireToken()
+    const row = MOCK_IMPLEMENTATIONS.find((i) => i.id === id)
+    if (!row) throw new DataNotFoundError('implementation', id)
+    return {
+      format_version: 1,
+      exported_at: '2026-01-01T00:00:00Z',
+      implementation: {
+        name: row.name,
+        release_code: row.transactionSet.release,
+        transaction_set_code: row.transactionSet.identifier,
+        hl_levels: [],
+        loop_uses: [],
+        segment_uses: [],
+      },
+    }
+  }
+
+  async sourceSchemaList(query: PageQuery): Promise<SourceSchemaPage> {
+    this.requireToken()
+    const rows = [{id: MOCK_SOURCE_SCHEMA.id, name: MOCK_SOURCE_SCHEMA.name, mappings: [{id: 'mock-mapping-2', name: 'Acme 856'}]}]
+    return {sourceSchemas: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+  }
+
+  async sourceSchemaGet(id: string): Promise<SourceSchemaDetail> {
+    this.requireToken()
+    if (id !== MOCK_SOURCE_SCHEMA.id) throw new DataNotFoundError('source schema', id)
+    return {...MOCK_SOURCE_SCHEMA, mappings: [{id: 'mock-mapping-2', name: 'Acme 856'}]}
+  }
 }
 
 // Synthetic development data for the platform surface: fixed ids so tests and
 // manual exploration can address records without a discovery step.
 const MOCK_TRACE = 'aaaaaaaa-0000-0000-0000-000000000001'
+
+const MOCK_PARTNER_REF = {id: 'mock-partner-1', key: 'ACME', name: 'Acme Retail'}
+
+const MOCK_CONNECTIONS: ConnectionPage['connections'] = [
+  {id: 'mock-connection-1', name: 'Acme SFTP', kind: 'sftp', host: 'sftp.example.invalid', provisioned: true, as2Ready: false, partnerCount: 1},
+]
+
+const MOCK_CONNECTION_DETAIL: ConnectionDetail = {
+  id: 'mock-connection-1',
+  name: 'Acme SFTP',
+  kind: 'sftp',
+  host: 'sftp.example.invalid',
+  port: 22,
+  username: 'acme',
+  inboundDirectory: '/in',
+  outboundDirectory: '/out',
+  provisioned: true,
+  as2Ready: false,
+  partners: [MOCK_PARTNER_REF],
+}
+
+const MOCK_ENVELOPES: EnvelopePage['envelopes'] = [
+  {id: 'mock-envelope-1', name: 'Us', external: false, interchangeExtid: 'SENDERID', interchangeExtidQualifier: 'ZZ', applicationCode: 'SENDERID'},
+  {id: 'mock-envelope-2', name: 'Acme', external: true, interchangeExtid: 'RECEIVERID', interchangeExtidQualifier: 'ZZ', applicationCode: 'RECEIVERID'},
+]
+
+const MOCK_WEBHOOKS: WebhookPage['webhooks'] = [
+  {id: 'mock-webhook-1', name: 'Orders', kind: 'standard', url: 'https://example.invalid/hooks/orders'},
+]
+
+const MOCK_FLOWS: FlowPage['flows'] = [
+  {id: 'mock-flow-1', name: 'Acme Inbound', direction: 'inbound', status: 'active', frequency: 5, versionNumber: 1, usesSandbox: false, partner: MOCK_PARTNER_REF},
+  {id: 'mock-flow-2', name: 'Acme Outbound', direction: 'outbound', status: 'active', frequency: 0, versionNumber: 2, usesSandbox: false, partner: MOCK_PARTNER_REF},
+]
+
+const MOCK_SOURCE_SCHEMA = {
+  id: 'mock-source-schema-1',
+  name: 'Shipment',
+  sample: {shipment: {number: 'SH-1', lines: [{sku: 'A1', qty: 2}]}},
+  semantics: 'One shipment with its lines.',
+}
+
+const MOCK_MAPPINGS: MappingPage['mappings'] = [
+  {id: 'mock-mapping-1', name: 'Acme 850', direction: 'inbound', implementation: {id: 'mock-impl-2', name: 'Acme 850'}, sourceSchema: null, currentVersion: 1, placeholderCount: 0, partners: ['ACME']},
+  {id: 'mock-mapping-2', name: 'Acme 856', direction: 'outbound', implementation: {id: 'mock-impl-1', name: 'Acme 856'}, sourceSchema: {id: 'mock-source-schema-1', name: 'Shipment'}, currentVersion: 2, placeholderCount: 1, partners: ['ACME']},
+]
+
+const MOCK_MAPPING_VERSIONS: MappingVersion[] = [
+  {versionNumber: 1, transformation: '{ "heading": {} }', placeholders: [], note: null, createdAt: '2026-01-01T00:00:00Z', createdBy: {name: 'Dev'}},
+  {
+    versionNumber: 2,
+    transformation: '{ "heading": { "carrier": $placeholder("SCAC", "not in source") } }',
+    placeholders: [{value: 'SCAC', reason: 'not in source', position: 27, line: 1, column: 28}],
+    note: 'Added carrier placeholder',
+    createdAt: '2026-01-02T00:00:00Z',
+    createdBy: {name: 'Dev'},
+  },
+]
+
+const MOCK_IMPLEMENTATIONS: ImplementationPage['implementations'] = [
+  {id: 'mock-impl-1', name: 'Acme 856', version: '1', status: 'active', transactionSet: {identifier: '856', release: '004010'}, sourceImplementation: null, segmentUseCount: 12, loopUseCount: 3},
+  {id: 'mock-impl-2', name: 'Acme 850', version: '1', status: 'draft', transactionSet: {identifier: '850', release: '004010'}, sourceImplementation: {id: 'mock-public-1', name: 'Public 850'}, segmentUseCount: 20, loopUseCount: 4},
+]
 const MOCK_FAILING_TRACE = 'mock-trace-failing'
 
 const MOCK_TRANSACTIONS: TransactionSummary[] = [
@@ -1039,6 +1329,15 @@ export class HttpApiClient implements ApiClient {
                 suggestions: [`Run \`tedi partner get ${notFound.id}\` to see which sets the partner takes in each direction.`],
               })
             }
+            // The mapping exists and the version does not; the server's
+            // sentence names both.
+            if (fault.reason === 'mapping_version') {
+              throw new TediError(fault.message || `No such version of mapping '${notFound.id}'.`, {
+                exitCode: EXIT_DEFECT,
+                code: fault.code,
+                suggestions: [`Run \`tedi mapping versions ${notFound.id}\` to list its versions.`],
+              })
+            }
             throw new DataNotFoundError(notFound.kind, notFound.id)
           }
           throw new NoSuchEndpointError(this.base)
@@ -1312,6 +1611,135 @@ export class HttpApiClient implements ApiClient {
     return this.platformJson<TraceDetail>(`/platform/traces/${encodeURIComponent(guid)}`, {
       notFound: {kind: 'trace', id: guid},
     })
+  }
+
+  // --- The rest of the read-only control plane ------------------------------
+
+  async connectionList(query: PageQuery): Promise<ConnectionPage> {
+    const raw = await this.platformList<Partial<ConnectionPage>>('connections', query)
+    return {connections: raw.connections ?? [], pagination: paginationOf(raw)}
+  }
+
+  connectionGet(id: string): Promise<ConnectionDetail> {
+    return this.platformShow<ConnectionDetail>('connections', 'connection', id)
+  }
+
+  async envelopeList(query: PageQuery): Promise<EnvelopePage> {
+    const raw = await this.platformList<Partial<EnvelopePage>>('envelopes', query)
+    return {envelopes: raw.envelopes ?? [], pagination: paginationOf(raw)}
+  }
+
+  envelopeGet(id: string): Promise<EnvelopeDetail> {
+    return this.platformShow<EnvelopeDetail>('envelopes', 'envelope', id)
+  }
+
+  async webhookList(query: PageQuery): Promise<WebhookPage> {
+    const raw = await this.platformList<Partial<WebhookPage>>('webhooks', query)
+    return {webhooks: raw.webhooks ?? [], pagination: paginationOf(raw)}
+  }
+
+  webhookGet(id: string): Promise<WebhookDetail> {
+    return this.platformShow<WebhookDetail>('webhooks', 'webhook', id)
+  }
+
+  async flowList(query: FlowListQuery): Promise<FlowPage> {
+    const raw = await this.platformList<Partial<FlowPage>>('flows', query, {
+      partner: query.partner,
+      direction: query.direction,
+      status: query.status,
+    })
+    return {flows: raw.flows ?? [], pagination: paginationOf(raw)}
+  }
+
+  flowGet(id: string): Promise<FlowDetail> {
+    return this.platformShow<FlowDetail>('flows', 'flow', id)
+  }
+
+  async mappingList(query: MappingListQuery): Promise<MappingPage> {
+    const raw = await this.platformList<Partial<MappingPage>>('mappings', query, {
+      direction: query.direction,
+      partner: query.partner,
+    })
+    return {mappings: raw.mappings ?? [], pagination: paginationOf(raw)}
+  }
+
+  mappingGet(id: string): Promise<MappingDetail> {
+    return this.platformShow<MappingDetail>('mappings', 'mapping', id)
+  }
+
+  async mappingVersions(id: string, query: PageQuery): Promise<MappingVersionPage> {
+    const raw = await this.platformList<Partial<MappingVersionPage>>(`mappings/${encodeURIComponent(id)}/versions`, query, {}, {
+      kind: 'mapping',
+      id,
+    })
+    return {versions: raw.versions ?? [], pagination: paginationOf(raw)}
+  }
+
+  mappingVersion(id: string, number: number): Promise<MappingVersion> {
+    // The 404 is the mapping's or the version's; `reason: "mapping_version"`
+    // marks the second, and throwForStatus prints the server's sentence for
+    // it (which names the version and the mapping).
+    return this.platformJson<MappingVersion>(`/platform/mappings/${encodeURIComponent(id)}/versions/${number}`, {
+      notFound: {kind: 'mapping', id},
+    })
+  }
+
+  async implementationList(query: ImplementationListQuery): Promise<ImplementationPage> {
+    const raw = await this.platformList<Partial<ImplementationPage>>('implementations', query, {
+      transactionSetIdentifier: query.transactionSetIdentifier,
+    })
+    return {implementations: raw.implementations ?? [], pagination: paginationOf(raw)}
+  }
+
+  implementationGet(id: string): Promise<ImplementationDetail> {
+    return this.platformShow<ImplementationDetail>('implementations', 'implementation', id)
+  }
+
+  implementationSchema(id: string): Promise<unknown> {
+    return this.platformJson<unknown>(`/platform/implementations/${encodeURIComponent(id)}/schema`, {
+      notFound: {kind: 'implementation', id},
+    })
+  }
+
+  async implementationGuide(id: string, format: OutputFormat): Promise<string> {
+    if (!this.opts.token) throw new NotAuthenticatedError(this.base)
+    const url = new URL(`${this.base}/platform/implementations/${encodeURIComponent(id)}/guide`)
+    url.searchParams.set('variant', format)
+    const res = await this.send(url, {headers: this.headers()})
+    if (!res.ok) await this.throwForStatus(res, {notFound: {kind: 'implementation', id}})
+    return res.text()
+  }
+
+  implementationExport(id: string): Promise<unknown> {
+    return this.platformJson<unknown>(`/platform/implementations/${encodeURIComponent(id)}/export`, {
+      notFound: {kind: 'implementation', id},
+    })
+  }
+
+  async sourceSchemaList(query: PageQuery): Promise<SourceSchemaPage> {
+    const raw = await this.platformList<Partial<SourceSchemaPage>>('source_schemas', query)
+    return {sourceSchemas: raw.sourceSchemas ?? [], pagination: paginationOf(raw)}
+  }
+
+  sourceSchemaGet(id: string): Promise<SourceSchemaDetail> {
+    return this.platformShow<SourceSchemaDetail>('source_schemas', 'source schema', id)
+  }
+
+  /** A control-plane list: the shared page query plus the resource's own filters. */
+  private platformList<T>(
+    path: string,
+    page: PageQuery,
+    filters: Record<string, string | number | boolean | undefined> = {},
+    notFound?: {kind: string; id: string},
+  ): Promise<T> {
+    const url = new URL(`${this.base}/platform/${path}`)
+    applyQuery(url, {...filters, limit: page.limit, cursor: page.cursor})
+    return this.platformJson<T>(url, notFound ? {notFound} : {})
+  }
+
+  /** A control-plane show by id; the 404 names the resource and the id. */
+  private platformShow<T>(path: string, kind: string, id: string): Promise<T> {
+    return this.platformJson<T>(`/platform/${path}/${encodeURIComponent(id)}`, {notFound: {kind, id}})
   }
 
   /**

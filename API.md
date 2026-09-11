@@ -599,6 +599,17 @@ GET  /platform/feed_entries                  the feed, oldest first
 GET  /platform/artifacts/:id                 raw document bytes
 POST /platform/partners/:key/ts/:code        outbound submission
 POST /platform/partners/:key/edi             inbound raw-EDI submission
+GET  /platform/connections [/:id]            connections
+GET  /platform/envelopes [/:id]              envelopes
+GET  /platform/webhooks [/:id]               webhooks
+GET  /platform/flows [/:id]                  flows; filters partner, direction, status
+GET  /platform/mappings [/:id]               mappings; filters direction, partner
+GET  /platform/mappings/:id/versions [/:n]   a mapping's versions
+GET  /platform/implementations [/:id]        your own implementations; filter transactionSetIdentifier
+GET  /platform/implementations/:id/schema    the JSON schema a mapping targets
+GET  /platform/implementations/:id/guide     the rendered guide, ?variant=console|markdown
+GET  /platform/implementations/:id/export    the portable export
+GET  /platform/source_schemas [/:id]         source schemas
 ```
 
 Every list answers `{<collection>, pagination: {hasMore, nextCursor}}`, takes
@@ -679,6 +690,63 @@ Keys resolve in any case and are returned uppercase. A miss is
 `404 not_found` with `reason: "partner"`.
 
 Backs `tedi partner list` and `tedi partner get <key>`.
+
+### Configuration
+
+```
+GET /platform/connections [/:id]
+GET /platform/envelopes [/:id]
+GET /platform/webhooks [/:id]
+GET /platform/flows [/:id]
+GET /platform/mappings [/:id]
+GET /platform/mappings/:id/versions [/:number]
+GET /platform/implementations [/:id]
+GET /platform/implementations/:id/{schema|guide|export}
+GET /platform/source_schemas [/:id]
+```
+
+The rest of the read-only control plane, on the partner pattern: compact list
+rows, a show that embeds related objects with their ids, raw facts, the shared
+cursor, secrets absent, standard key only. Ids are the identifiers everywhere;
+a partner key is a list filter (`partner=`) and never a path segment. Every
+resource that points at another returns `{id, name}` (`{id, key, name}` for a
+partner), and every resource lists what points at it: a connection its
+`partners`, an envelope and a webhook their `partners` each with a `role`, a
+mapping the keys of the `partners` using it, an implementation its `mappings` and
+`partners`, a source schema its `mappings`.
+
+A miss on any show is `404 not_found` with `reason` naming the resource
+(`connection`, `envelope`, `webhook`, `flow`, `mapping`, `mapping_version`,
+`implementation`, `source_schema`), and the CLI prints "No <resource> '<id>'
+in your organization." A malformed id is a miss, not a 400.
+
+Flows list only the current version of each; superseded versions drop out.
+`status` is `pending|active`, `frequency` is minutes with `0` paused, and the
+show adds `nodes: [{id, name, kind, service}]` and `connections: [{from, to}]`
+with no node configuration. `direction` and `status` outside their vocabulary
+are refused with `invalid_parameter`; an unknown partner key is an empty page.
+
+A mapping's show carries `current` (the latest version: `versionNumber`,
+`transformation`, `placeholders`, `note`, `createdAt`, `createdBy: {name}`)
+and the source schema embedded in full (`sample`, `semantics`); the
+implementation stays a reference. `versions/:number` returns one version in
+the `current` shape, which is what `--version` on `mapping get` prints and
+what `--json` emits there. `current.versionNumber` is `null` on a mapping
+saved before versions existed.
+
+Implementations cover the organization's own only. A public implementation
+(the shared catalogue) is a 404 on every representation here; importing one is
+done in the app, after which it is the organization's copy with
+`sourceImplementation` recording the origin. `schema` is the JSON schema
+(draft 2020-12) a mapping targets, returned as JSON. `guide` is presentation
+only, like the reference: `?variant=console` (default, `text/plain`) or
+`markdown` (`text/markdown`), no JSON variant, and `tedi implementation guide`
+refuses `--json` the way `x12` does. `export` is the portable document keyed
+by natural identifiers; the import side of that round-trip is an
+administrator's endpoint and stays out of the CLI.
+
+Backs `tedi connection|envelope|webhook|flow|mapping|source-schema list|get`,
+`tedi mapping versions`, and `tedi implementation list|get|schema|guide|export`.
 
 ### Traces
 
@@ -1022,10 +1090,11 @@ faulted" rather than `-32002 upstream_error`, which reads as "server down".
 
 ## Not available yet (do not build against)
 
-- Control-plane writes, and reads of anything but partners. Connection,
-  envelope, webhook, flow, mapping and implementation reads are the next phase:
-  their platform serializers exist (the partner show embeds them) but their
-  standalone endpoints do not. There is no `control` scope yet either; partner
-  reads sit under `standard`, and nothing here forecloses adding one.
+- Control-plane writes. Every configuration resource is readable (see
+  Configuration); creating or changing any of it stays in the application.
+  Node configuration bodies are not readable either: a flow's show carries
+  node identities and edges only. There is no `control` scope yet; the reads
+  sit under `standard`, and nothing here forecloses adding one.
+- Public (catalogue) implementations, and importing one through the API.
 - The JSON `index`/`show`, `search`, and `favourites` actions under the
   reference namespace are web-app internals; the CLI does not use them.

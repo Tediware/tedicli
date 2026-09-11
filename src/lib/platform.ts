@@ -330,6 +330,229 @@ export interface TraceDetail {
   artifacts: TraceArtifact[]
 }
 
+// ---------------------------------------------------------------------------
+// The rest of the read-only control plane. Every resource that points at
+// another does so as {id, name}, or {id, key, name} for a partner, and every
+// resource lists what points at it.
+// ---------------------------------------------------------------------------
+
+export interface NamedRef {
+  id: string
+  name: string
+}
+
+export interface PartnerRef {
+  id: string
+  key: string
+  name: string
+}
+
+export interface ConnectionSummary {
+  id: string
+  name: string
+  kind: string
+  host: string | null
+  provisioned: boolean
+  as2Ready: boolean
+  partnerCount: number
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ConnectionPage extends Paged {
+  connections: ConnectionSummary[]
+}
+
+/** The partner embed plus the partners on it. */
+export interface ConnectionDetail extends PartnerConnection {
+  partners: PartnerRef[]
+}
+
+export interface EnvelopeSummary {
+  id: string
+  name: string
+  external: boolean
+  interchangeExtid: string | null
+  interchangeExtidQualifier: string | null
+  applicationCode: string | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface EnvelopePage extends Paged {
+  envelopes: EnvelopeSummary[]
+}
+
+export interface EnvelopeDetail extends PartnerEnvelope {
+  partners: (PartnerRef & {role: 'internal' | 'external'})[]
+}
+
+export interface WebhookSummary {
+  id: string
+  name: string
+  kind: string
+  url: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface WebhookPage extends Paged {
+  webhooks: WebhookSummary[]
+}
+
+export interface WebhookDetail extends PartnerWebhook {
+  partners: (PartnerRef & {role: 'inbound' | 'outbound' | 'error'})[]
+}
+
+export interface FlowSummary {
+  id: string
+  name: string
+  direction: Direction
+  status: string
+  /** Polling interval in minutes; 0 is paused. */
+  frequency: number
+  versionNumber: number
+  usesSandbox: boolean
+  partner: PartnerRef
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface FlowListQuery extends PageQuery {
+  partner?: string
+  direction?: Direction
+  status?: string
+}
+
+export interface FlowPage extends Paged {
+  flows: FlowSummary[]
+}
+
+export interface FlowNode {
+  id: string
+  name: string
+  kind: string
+  service: string
+}
+
+export interface FlowDetail extends FlowSummary {
+  nodes: FlowNode[]
+  connections: {from: string; to: string}[]
+}
+
+export interface MappingSummary {
+  id: string
+  name: string
+  direction: Direction
+  implementation: NamedRef | null
+  sourceSchema: NamedRef | null
+  currentVersion: number | null
+  placeholderCount: number
+  /** Keys of the partners whose transaction set settings use it. */
+  partners: string[]
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface MappingListQuery extends PageQuery {
+  direction?: Direction
+  partner?: string
+}
+
+export interface MappingPage extends Paged {
+  mappings: MappingSummary[]
+}
+
+export interface Placeholder {
+  value: unknown
+  reason: string | null
+  position: number
+  line: number
+  column: number
+}
+
+export interface MappingVersion {
+  /** Null on a mapping saved before versions existed. */
+  versionNumber: number | null
+  transformation: string
+  placeholders: Placeholder[]
+  note: string | null
+  createdAt: string
+  createdBy: {name: string} | null
+}
+
+export interface MappingVersionSummary {
+  versionNumber: number
+  note: string | null
+  createdAt: string
+  createdBy: {name: string} | null
+}
+
+export interface MappingVersionPage extends Paged {
+  versions: MappingVersionSummary[]
+}
+
+export interface SourceSchemaSummary {
+  id: string
+  name: string
+  mappings: NamedRef[]
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface SourceSchemaPage extends Paged {
+  sourceSchemas: SourceSchemaSummary[]
+}
+
+/** The embed on a mapping: the sample and the semantics note. */
+export interface SourceSchema {
+  id: string
+  name: string
+  sample: unknown
+  semantics: string | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface SourceSchemaDetail extends SourceSchema {
+  mappings: NamedRef[]
+}
+
+export interface MappingDetail extends Omit<MappingSummary, 'sourceSchema'> {
+  description: string | null
+  tags: string[]
+  sourceSchema: SourceSchema | null
+  current: MappingVersion | null
+}
+
+export interface ImplementationSummary {
+  id: string
+  name: string
+  version: string | null
+  status: string | null
+  transactionSet: {identifier: string; release: string}
+  sourceImplementation: NamedRef | null
+  segmentUseCount: number
+  loopUseCount: number
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface ImplementationListQuery extends PageQuery {
+  transactionSetIdentifier?: string
+}
+
+export interface ImplementationPage extends Paged {
+  implementations: ImplementationSummary[]
+}
+
+export interface ImplementationDetail extends ImplementationSummary {
+  description: string | null
+  tags: string[]
+  mappings: NamedRef[]
+  partners: PartnerRef[]
+}
+
 /**
  * Append the query's defined entries to a URL, skipping undefined so the server
  * keeps its own defaults. Booleans serialize as `true`/`false` (the server's

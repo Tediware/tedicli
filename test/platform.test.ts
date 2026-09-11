@@ -334,4 +334,161 @@ describe('data-plane commands (mock backend)', () => {
     assert.equal(error, undefined)
     assert.match(stdout, /Acme EDI \(dev\) \(scope: standard, key 'Development key' \.\.\.1234\)/)
   })
+
+  // The rest of the read-only control plane: one list and one get per noun,
+  // each exercising its table or view and the --json pass-through.
+
+  it('connection list and get render the transport and its partners, never a credential', async () => {
+    const list = await run(['connection', 'list'])
+    assert.equal(list.error, undefined)
+    assert.match(list.stdout, /ID\s+NAME\s+KIND\s+HOST\s+PROVISIONED\s+PARTNERS/)
+    assert.match(list.stdout, /mock-connection-1\s+Acme SFTP\s+sftp\s+sftp\.example\.invalid\s+yes\s+1/)
+
+    const get = await run(['connection', 'get', 'mock-connection-1'])
+    assert.equal(get.error, undefined)
+    assert.match(get.stdout, /Host\s+sftp\.example\.invalid:22 as acme/)
+    assert.match(get.stdout, /Partners:\n\s+ACME\s+Acme Retail/)
+    assert.doesNotMatch(get.stdout, /password/i)
+
+    const json = await run(['connection', 'get', 'mock-connection-1', '--json'])
+    assert.equal(JSON.parse(json.stdout).partners[0].key, 'ACME')
+    const missing = await run(['connection', 'get', 'nope'])
+    assert.equal(missing.exit, 1)
+    assert.match(missing.error?.message ?? '', /No connection 'nope'/)
+  })
+
+  it('envelope list and get show the identifiers and the role per partner', async () => {
+    const list = await run(['envelope', 'list'])
+    assert.equal(list.error, undefined)
+    assert.match(list.stdout, /mock-envelope-1\s+Us\s+ours\s+SENDERID\s+ZZ\s+SENDERID/)
+    assert.match(list.stdout, /mock-envelope-2\s+Acme\s+partner\s+RECEIVERID/)
+
+    const get = await run(['envelope', 'get', 'mock-envelope-2'])
+    assert.equal(get.error, undefined)
+    assert.match(get.stdout, /ISA\s+ZZ RECEIVERID/)
+    assert.match(get.stdout, /Separators\s+segment ~\s+element \*\s+component >/)
+    assert.match(get.stdout, /ACME\s+external\s+Acme Retail/)
+  })
+
+  it('webhook list and get show the URL and the role per partner, never a secret', async () => {
+    const list = await run(['webhook', 'list'])
+    assert.equal(list.error, undefined)
+    assert.match(list.stdout, /mock-webhook-1\s+Orders\s+standard\s+https:\/\/example\.invalid\/hooks\/orders/)
+
+    const get = await run(['webhook', 'get', 'mock-webhook-1'])
+    assert.equal(get.error, undefined)
+    assert.match(get.stdout, /Content type\s+application\/json/)
+    assert.match(get.stdout, /ACME\s+inbound\s+Acme Retail/)
+    assert.doesNotMatch(get.stdout, /secret/i)
+  })
+
+  it('flow list filters, and flow get shows nodes and edges by name', async () => {
+    const list = await run(['flow', 'list'])
+    assert.equal(list.error, undefined)
+    assert.match(list.stdout, /mock-flow-1\s+Acme Inbound\s+ACME\s+inbound\s+active\s+5m\s+1\s+no/)
+    assert.match(list.stdout, /mock-flow-2\s+Acme Outbound\s+ACME\s+outbound\s+active\s+paused\s+2\s+no/)
+
+    const filtered = await run(['flow', 'list', '--direction', 'inbound', '--partner', 'acme'])
+    assert.match(filtered.stdout, /Acme Inbound/)
+    assert.doesNotMatch(filtered.stdout, /Acme Outbound/)
+    const none = await run(['flow', 'list', '--partner', 'NOPE'])
+    assert.match(none.stdout, /No flows match/)
+
+    const get = await run(['flow', 'get', 'mock-flow-2'])
+    assert.equal(get.error, undefined)
+    assert.match(get.stdout, /Frequency\s+paused/)
+    assert.match(get.stdout, /mock-node-2\s+Acme 856 mapping\s+transformation\s+mapping/)
+    assert.match(get.stdout, /Partner endpoint -> Acme 856 mapping/)
+    assert.match(get.stdout, /Acme 856 mapping -> Upload/)
+  })
+
+  it('mapping list, get, versions, and -o writing the transformation alone', async () => {
+    const list = await run(['mapping', 'list'])
+    assert.equal(list.error, undefined)
+    assert.match(list.stdout, /mock-mapping-2\s+Acme 856\s+outbound\s+Acme 856\s+Shipment\s+2\s+1\s+ACME/)
+    const outbound = await run(['mapping', 'list', '--direction', 'inbound'])
+    assert.doesNotMatch(outbound.stdout, /mock-mapping-2/)
+
+    const get = await run(['mapping', 'get', 'mock-mapping-2'])
+    assert.equal(get.error, undefined)
+    assert.match(get.stdout, /Implementation Acme 856 \(mock-impl-1\)/)
+    assert.match(get.stdout, /Source schema\s+Shipment \(mock-source-schema-1\)/)
+    assert.match(get.stdout, /Version\s+2, Added carrier placeholder/)
+    assert.match(get.stdout, /line 1, column 28: "SCAC" \(not in source\)/)
+    assert.match(get.stdout, /```\n\{ "heading": \{ "carrier": \$placeholder/)
+
+    const older = await run(['mapping', 'get', 'mock-mapping-2', '--version', '1'])
+    assert.equal(older.error, undefined)
+    assert.match(older.stdout, /Implementation Acme 856/)
+    assert.match(older.stdout, /Version\s+1\n/)
+    assert.match(older.stdout, /\{ "heading": \{\} \}/)
+    const olderJson = await run(['mapping', 'get', 'mock-mapping-2', '--version', '1', '--json'])
+    assert.equal(JSON.parse(olderJson.stdout).versionNumber, 1)
+    const noVersion = await run(['mapping', 'get', 'mock-mapping-2', '--version', '9'])
+    assert.equal(noVersion.exit, 1)
+    assert.match(noVersion.error?.message ?? '', /No version 9 of mapping mock-mapping-2/)
+    const stdoutJson = await run(['mapping', 'get', 'mock-mapping-2', '-o', '-', '--json'])
+    assert.equal(JSON.parse(stdoutJson.stdout).id, 'mock-mapping-2')
+
+    const file = join(dir, 'map.jsonata')
+    const written = await run(['mapping', 'get', 'mock-mapping-2', '-o', file])
+    assert.equal(written.error, undefined)
+    assert.equal(await readFile(file, 'utf8'), '{ "heading": { "carrier": $placeholder("SCAC", "not in source") } }')
+
+    const versions = await run(['mapping', 'versions', 'mock-mapping-2'])
+    assert.equal(versions.error, undefined)
+    assert.match(versions.stdout, /VERSION\s+SAVED\s+BY\s+NOTE/)
+    assert.match(versions.stdout, /2\s+2026-01-02 00:00:00Z\s+Dev\s+Added carrier placeholder/)
+  })
+
+  it('implementation list, get, schema, guide and export', async () => {
+    const list = await run(['implementation', 'list'])
+    assert.equal(list.error, undefined)
+    assert.match(list.stdout, /mock-impl-1\s+Acme 856\s+856\s+004010\s+1\s+active\s+12\s+3\s+-/)
+    assert.match(list.stdout, /mock-impl-2\s+Acme 850\s+850\s+004010\s+1\s+draft\s+20\s+4\s+Public 850/)
+    const one = await run(['implementation', 'list', '--set', '850'])
+    assert.doesNotMatch(one.stdout, /mock-impl-1/)
+
+    const get = await run(['implementation', 'get', 'mock-impl-1'])
+    assert.equal(get.error, undefined)
+    assert.match(get.stdout, /Acme 856  \(856 in 004010\)/)
+    assert.match(get.stdout, /Structure\s+12 segments, 3 loops/)
+    assert.match(get.stdout, /Partners using it directly:\n\s+ACME\s+Acme Retail/)
+
+    const schema = await run(['implementation', 'schema', 'mock-impl-1'])
+    assert.equal(schema.error, undefined)
+    assert.equal(JSON.parse(schema.stdout).$schema, 'https://json-schema.org/draft/2020-12/schema')
+    const schemaFile = join(dir, 'schema.json')
+    await run(['implementation', 'schema', 'mock-impl-1', '-o', schemaFile])
+    assert.equal(JSON.parse(await readFile(schemaFile, 'utf8')).type, 'object')
+
+    const guide = await run(['implementation', 'guide', 'mock-impl-1'])
+    assert.equal(guide.error, undefined)
+    assert.match(guide.stdout, /R  BSN - Beginning Segment/)
+    const markdown = await run(['implementation', 'guide', 'mock-impl-1', '--format', 'markdown'])
+    assert.match(markdown.stdout, /^# Acme 856 \(v1\)/)
+    const guideJson = await run(['implementation', 'guide', 'mock-impl-1', '--json'])
+    assert.equal(guideJson.exit, 2)
+    assert.match(guideJson.error?.message ?? '', /rendered document/)
+
+    const exportFile = join(dir, 'export.json')
+    const exported = await run(['implementation', 'export', 'mock-impl-1', '-o', exportFile])
+    assert.equal(exported.error, undefined)
+    const doc = JSON.parse(await readFile(exportFile, 'utf8'))
+    assert.equal(doc.format_version, 1)
+    assert.equal(doc.implementation.transaction_set_code, '856')
+  })
+
+  it('source-schema list and get show the sample and the mappings reading it', async () => {
+    const list = await run(['source-schema', 'list'])
+    assert.equal(list.error, undefined)
+    assert.match(list.stdout, /mock-source-schema-1\s+Shipment\s+Acme 856/)
+
+    const get = await run(['source-schema', 'get', 'mock-source-schema-1'])
+    assert.equal(get.error, undefined)
+    assert.match(get.stdout, /Semantics\s+One shipment with its lines\./)
+    assert.match(get.stdout, /"number": "SH-1"/)
+    const json = await run(['source-schema', 'get', 'mock-source-schema-1', '--json'])
+    assert.equal(JSON.parse(json.stdout).sample.shipment.number, 'SH-1')
+  })
 })
