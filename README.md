@@ -307,7 +307,7 @@ tedi mapping versions <id>           # every version; mapping get --version <n> 
 tedi implementation list --set 850   # your own implementations (public ones are imported in the app)
 tedi implementation schema <id>      # the JSON shape a mapping targets
 tedi implementation guide <id> --format markdown -o acme-850.md
-tedi implementation export <id> -o acme-850.json   # the portable file the import endpoint accepts
+tedi implementation export <id> -o acme-850.json   # one portable JSON document, for version control or a diff
 
 tedi source list              # the shapes you send, and the mappings reading each
 ```

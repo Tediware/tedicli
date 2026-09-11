@@ -4,11 +4,11 @@ import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
 import {writeFileAtomic} from '../../lib/atomic-write.js'
 
 export default class ImplementationExport extends PlatformCommand<typeof ImplementationExport> {
-  static summary = 'Export an implementation as the portable JSON the import endpoint accepts.'
+  static summary = 'Export an implementation as one portable JSON document.'
 
   static description = `${SERVER_DATA}
 
-The export is keyed by natural identifiers rather than database ids, so it can be stored, diffed, and imported into another Tediware server. The output is the document itself, so --json and the default print the same thing; -o writes it to a file.`
+The export is keyed by segment codes, positions and loop identifiers rather than database ids, so it reads the same anywhere: keep it in version control, diff two revisions of a partner specification, or attach it to a support conversation. The output is the document itself, so --json and the default print the same thing; -o writes it to a file.`
 
   static examples = [
     '<%= config.bin %> implementation export 9c1b2a3d-... -o acme-856.json',

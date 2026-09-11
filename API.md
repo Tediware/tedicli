@@ -741,9 +741,10 @@ done in the app, after which it is the organization's copy with
 (draft 2020-12) a mapping targets, returned as JSON. `guide` is presentation
 only, like the reference: `?variant=console` (default, `text/plain`) or
 `markdown` (`text/markdown`), no JSON variant, and `tedi implementation guide`
-refuses `--json` the way `x12` does. `export` is the portable document keyed
-by natural identifiers; the import side of that round-trip is an
-administrator's endpoint and stays out of the CLI.
+refuses `--json` the way `x12` does. `export` is the whole implementation as one
+portable JSON document keyed by segment codes, positions and loop identifiers
+rather than database ids, for version control, diffs and support
+conversations. There is no import on this plane.
 
 Backs `tedi connection|envelope|webhook|flow|mapping|source list|get`,
 `tedi mapping versions`, and `tedi implementation list|get|schema|guide|export`.
