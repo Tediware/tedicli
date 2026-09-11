@@ -9,6 +9,7 @@ import {ConfigStore, DEFAULT_X12_RELEASE, isConfigKey} from '../src/lib/config-s
 import {FileCredentialStore} from '../src/lib/credentials.js'
 import {JsonNotSupportedError} from '../src/lib/errors.js'
 import {wantsColor, wantsFullCodeList} from '../src/lib/output.js'
+import {closestCommand, distance} from '../src/hooks/command_not_found/did-you-mean.js'
 
 describe('wantsColor', () => {
   it('never requests color for markdown', () => {
@@ -169,5 +170,37 @@ describe('JsonNotSupportedError', () => {
     assert.match(err.message, /--json is not offered here/)
     assert.match(err.message, /licensed X12 reference data/)
     assert.ok(err.suggestions.some((s) => s.includes('--format console')))
+  })
+})
+
+describe('closestCommand', () => {
+  const ids = ['transaction:list', 'transaction:get', 'partner:list', 'partner:get', 'trace', 'whoami']
+
+  it('suggests the command a typo was reaching for', () => {
+    assert.equal(closestCommand('transactoin:list', ids), 'transaction:list')
+    assert.equal(closestCommand('parner:list', ids), 'partner:list')
+    assert.equal(closestCommand('whoarni', ids), 'whoami')
+  })
+
+  it('suggests nothing when nothing is close', () => {
+    assert.equal(closestCommand('nosuchthing', ids), undefined)
+    assert.equal(closestCommand('whoami:extra', ids), undefined)
+  })
+
+  it('scales the threshold with length, so short ids do not match each other', () => {
+    assert.equal(closestCommand('trace', ids), 'trace')
+    assert.equal(closestCommand('xyz', ids), undefined)
+  })
+})
+
+describe('distance', () => {
+  it('counts single-character edits', () => {
+    assert.equal(distance('partner', 'partner'), 0)
+    assert.equal(distance('parner', 'partner'), 1)
+    assert.equal(distance('transactoin', 'transaction'), 2)
+  })
+
+  it('caps rather than walking a long comparison', () => {
+    assert.ok(distance('a', 'abcdefghij') > 4)
   })
 })

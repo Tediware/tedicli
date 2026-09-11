@@ -39,8 +39,7 @@
     "@oclif/core": "^4",
     "@oclif/plugin-help": "^6",
     "@oclif/plugin-warn-if-update-available": "^3.1.67",
-    "chalk": "^5",
-    "@oclif/plugin-not-found": "^3.2.88"
+    "chalk": "^5"
   },
   "devDependencies": {
     "@oclif/test": "^4.1.20",
@@ -57,11 +56,11 @@
     "topicSeparator": " ",
     "plugins": [
       "@oclif/plugin-help",
-      "@oclif/plugin-not-found",
       "@oclif/plugin-warn-if-update-available"
     ],
     "hooks": {
-      "postrun": "./dist/hooks/postrun/changelog"
+      "postrun": "./dist/hooks/postrun/changelog",
+      "command_not_found": "./dist/hooks/command_not_found/did-you-mean"
     },
     "warn-if-update-available": {
       "timeoutInDays": 1,

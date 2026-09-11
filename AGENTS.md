@@ -56,6 +56,7 @@ explains its exit code.
 | `transaction`, `result`, `feed`, `artifact`, `trace`, `partner list`, `partner get` | Server, your organization's data. |
 | `partner send`, `partner receive`, `transaction resend` | Server, and the document is delivered or processed. |
 | `mcp serve`                                 | Forwards to the server. No tool logic locally. |
+| `whoami`, `auth login`, `auth status`       | Server. `auth status` reads only the key's label and degrades without it. |
 | `config`, `auth logout`                     | Local. Nothing is sent.           |
 
 The first line of each command's `--help` states this too.
@@ -143,6 +144,11 @@ instructions and tool list are authoritative. Register it with the host once:
 ```bash
 claude mcp add tediware -- tedi mcp serve
 ```
+
+The platform speaks MCP revision `2026-07-28`, which has no handshake, so the
+bridge answers the `initialize`, `notifications/initialized` and `ping` calls
+that current hosts still open with, and stamps the revision onto everything it
+forwards; a host connects without knowing the server is newer than it is.
 
 It uses the stored key or `TEDI_API_KEY`, and it is metered into the same rate
 limits as the CLI commands, so calling a tool and running the equivalent

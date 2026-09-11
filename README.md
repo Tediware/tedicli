@@ -39,8 +39,11 @@ tedi edi inspect f.edi     # check an interchange against the X12 standard
 
 ## Authentication
 
-All commands that talk to the Tediware platform require an API key; local `edi`
-file operations run without one. Create a key in the Tediware dashboard
+All commands that talk to the Tediware platform require an API key, with two
+exceptions: local `edi` file operations need no server at all, and
+`tedi x12 releases` is served anonymously (the CLI still sends a key when it
+has one, so the call counts against your own allowance rather than a shared
+per-IP one). Create a key in the Tediware dashboard
 (sign up and accept the service terms there first, then head to https://tediware.com/app/api-keys), then provide it to the CLI.
 The key is never passed as a command-line flag, so it can't leak into shell
 history or process listings.
@@ -72,8 +75,13 @@ on every request.
 tedi x12 seg <id>        # e.g. tedi x12 seg N1   (alias: segment; case-insensitive)
 tedi x12 txn <id>        # e.g. tedi x12 txn 856  (alias: transaction; case-insensitive, SH856 also accepted)
 tedi x12 ele <id>        # e.g. tedi x12 ele 66   (alias: element; case-insensitive)
-tedi x12 releases        # list supported X12 releases
+tedi x12 releases        # list the releases this server carries (no key needed)
 ```
+
+`tedi x12 releases` marks the release your lookups default to and warns when
+that release is not one the server carries. It is the only `x12` command that
+also takes `--json`: a list of release codes is version metadata, not
+dictionary content.
 
 Every `x12` command accepts:
 
@@ -118,10 +126,11 @@ format-preserving, so the scrubbed file still parses and still reproduces the
 problem you are chasing.
 
 ```bash
-tedi edi obfuscate <file>              # obfuscated EDI to stdout ('-' or a bare pipe reads stdin)
+tedi edi obfuscate <file>              # obfuscated EDI to stdout
 tedi edi obfuscate claims.edi -o clean.edi   # write to a file instead
 tedi edi obfuscate claims.edi --seed s       # reproducible replacements
 tedi edi obfuscate order.edi --scrub-parties # drop-ship order: the ship-to is a consumer
+cat claims.edi | tedi edi obfuscate          # stdin, with or without a '-'
 ```
 
 `edi obfuscate` replaces personal data in an X12 interchange with
@@ -165,10 +174,11 @@ files.
 ### Inspecting an interchange
 
 ```bash
-tedi edi inspect claims.edi                 # report to stdout ('-' or a bare pipe reads stdin)
+tedi edi inspect claims.edi                 # report to stdout
 tedi edi inspect claims.edi --no-obfuscate  # upload the file verbatim instead
 tedi edi inspect claims.edi --format markdown -o report.md
 tedi edi inspect claims.edi --fail-on notice  # count notices toward exit 1 too
+cat claims.edi | tedi edi inspect           # stdin, with or without a '-'
 ```
 
 `edi inspect` annotates the interchange, runs framing and envelope checks, and
@@ -257,6 +267,7 @@ tedi partner get ACME                # one partner: connection, envelopes, webho
 
 tedi partner send ACME 850 order.json       # your JSON in, EDI out to the partner
 tedi partner send ACME 856 ship.json --wait # ...and wait for the trace to finish (exit 1 on error)
+cat order.json | tedi partner send ACME 850 # the file argument reads stdin when omitted
 tedi partner receive ACME 850.edi           # raw partner EDI into the inbound flow
 
 tedi trace <guid>                    # everything on a trace: transactions, results, feed, artifacts, logs
@@ -283,6 +294,12 @@ with the `tedi trace <guid>` line to follow it with. Direction is always
 transaction set; `--since` takes an ISO 8601 timestamp with a zone, a bare date,
 or a relative form such as `2h`. Timestamps print as `YYYY-MM-DD HH:MM:SSZ`.
 `--json` prints the server's response unchanged.
+
+The feed is a forward-only stream, so it reads oldest first and a bare
+`feed list` shows the last 24 hours with a footer saying so. `--since` or
+`--cursor` chooses a different window; `--follow` picks up where the page ended
+and polls every 5 seconds. Logs read oldest first for the same reason.
+Transaction and result lists read newest first.
 
 ## Connect your agent
 

@@ -1,14 +1,27 @@
-# tedi CLI — API Surface
+<!--
+  tedi:synthetic-data-ok
+
+  This file is hand-written prose about the HTTP contract and carries no
+  reference content. The licensed-data tripwire's density check reads a line
+  beginning with a short uppercase token as a code-list row, which matches
+  every `GET /platform/...` and `404 (not_found) -> ...` line here. The marker
+  turns off that check only; the publisher and copyright markers and the
+  positioning check still apply to this file.
+-->
+
+# tedi CLI: the API surface
 
 The HTTP contract the CLI consumes. Two surfaces are documented here:
 
-- **X12 reference** (`/api/x12`), backing `tedi x12 ...` — licensed reference
+- **X12 reference** (`/api/x12`), backing `tedi x12 ...`: licensed reference
   lookup, read-only.
-- **EDI inspection** (`/api/edi`), backing `tedi edi inspect` — the CLI sends a
+- **EDI inspection** (`/api/edi`), backing `tedi edi inspect`. The CLI sends a
   document up and gets a rendered report back.
 - **The data plane** (`/platform`), backing `tedi transaction`, `result`,
-  `feed`, `artifact`, `partner` and `whoami` — the caller's own traffic.
-- **MCP** (`/mcp`), backing `tedi mcp serve` — the platform's Model Context
+  `feed`, `trace`, `artifact`, `partner` and `whoami`: the caller's own traffic
+  and, since partner reads landed, the first read-only slice of its
+  configuration.
+- **MCP** (`/mcp`), backing `tedi mcp serve`: the platform's Model Context
   Protocol server, which the CLI bridges to stdio without adding anything.
 
 This is not a public product API. It is reachable and stable enough to build the
@@ -42,7 +55,7 @@ integration contract behind it.
   the tediware repo at `doc/architecture/api_authentication.md`; treat that as
   canonical rather than re-deriving it here.
 - Inspection sits on that same reference floor: any valid key authenticates it
-  (standard or sandbox — scope is not enforced), provided the organization has
+  (standard or sandbox, since scope is not enforced), provided the organization has
   accepted the service terms and is not disabled. Unlike the reference
   endpoints, inspection always requires a key; there is no anonymous path.
 - The three `download` endpoints require the header. `releases` is reachable
@@ -60,7 +73,8 @@ GET /api/x12/releases
 ```
 
 Returns the supported X12 releases as JSON (this is version-index metadata, not
-licensed dictionary content, so JSON is acceptable here). Ordered newest first.
+licensed dictionary content, so JSON is acceptable here). Ordered by
+publication date, oldest first, then by code.
 
 Response `200`:
 
@@ -74,7 +88,9 @@ Response `200`:
 }
 ```
 
-Backs: `tedi x12 releases`. Not release-scoped.
+Backs: `tedi x12 releases`. Not release-scoped, and the one reference endpoint
+reachable without a key (see "Authentication"). The CLI marks the release its
+lookups default to and warns when that release is absent from this list.
 
 ### Segment, element, and transaction-set reference
 
@@ -100,13 +116,13 @@ Query parameters:
 - `variant=console|markdown`. The CLI should always send an explicit variant. If
   omitted, the server defaults to `console` (it defaulted to `markdown` until
   both endpoints were moved onto one shared vocabulary and default). Omitting it
-  therefore yields `text/plain` and a `.txt` filename, not markdown — which is
+  therefore yields `text/plain` and a `.txt` filename, not markdown, which is
   exactly why the CLI never omits it.
 - `color=true` colors the `console` variant only. Send it only when stdout is an
   interactive terminal and `NO_COLOR` is unset and `--no-color` was not passed.
   See "Color" below.
 - `limit=<n>|all` caps the rendered element code list. Omit it and the server
-  keeps its own default (20 today) — the CLI omits it rather than pinning a
+  keeps its own default (20 today); the CLI omits it rather than pinning a
   number the renderer is free to change. `limit=all` renders every code and drops
   the truncation footer, as does any `n` at or above the code count. Only
   `elements` acts on it; `segments` and `transaction_sets` accept and ignore it,
@@ -127,7 +143,7 @@ download menu). The CLI ignores it and reads the response body directly.
 The rendered output echoes the release it used (a `Release: <code>` line). Long
 element code lists are truncated in the `console` variant with a footer pointing
 at the markdown format for the full list; `markdown` returns every code. `limit`
-(above) overrides the truncation — see "Element code lists" below for how the CLI
+(above) overrides the truncation. See "Element code lists" below for how the CLI
 decides what to send.
 
 Backs:
@@ -146,12 +162,12 @@ POST /api/edi/inspect
 
 JSON body:
 
-- `edi_content` — the interchange, as a string. Required. Maximum 256 KB
+- `edi_content`: the interchange, as a string. Required. Maximum 256 KB
   (262,144 bytes); the CLI checks the size before uploading so an oversized file
   fails immediately rather than after the transfer.
-- `variant` — `console` or `markdown`. The CLI always sends an explicit variant;
+- `variant`: `console` or `markdown`. The CLI always sends an explicit variant;
   the server defaults to `console`, as the reference endpoints now do too.
-- `color` — `true` colors the `console` variant only, under the same rule as the
+- `color`: `true` colors the `console` variant only, under the same rule as the
   reference endpoints. See "Color" below.
 
 Not release-scoped. The release comes from the document's own envelope, so
@@ -163,11 +179,12 @@ types as the reference endpoints (`text/plain; charset=utf-8` for `console`,
 `text/markdown; charset=utf-8` for `markdown`).
 
 The report annotates the document, runs framing and envelope checks, validates
-against the X12 standard, and reprints the interchange one segment per line —
-findings anchor to those line numbers and close with a `Findings (N errors, M
-notices)` block. Rendering is server-side for the same reason reference rendering
-is: neither the parser nor the licensed reference data it validates against ships
-in the thin CLI.
+against the X12 standard, and renders the interchange as a tree of segments
+under their loops. Findings cite a segment's position in that tree, not a line
+number in the caller's file, and the report closes with a
+`Findings (N errors, M notices)` block. Rendering is server-side for the same
+reason reference rendering is: neither the parser nor the licensed reference
+data it validates against ships in the thin CLI.
 
 A document with problems is still a `200`: structural faults are reported as
 findings, not as an error status. See "Inspection errors" below for the line
@@ -175,7 +192,7 @@ between the two.
 
 #### Findings headers
 
-Every `200` — both variants — also summarizes itself in response headers, so a
+Every `200`, in both variants, also summarizes itself in response headers, so a
 caller can act on the outcome without parsing the rendered report:
 
 ```
@@ -190,7 +207,7 @@ They are **absent on every non-`200`**, and absence must never be read as zero.
 the counts: a gate built on the counts alone is wrong. The inspection is
 deliberately fail-soft. If the framing check crashes its findings vanish with no
 trace in the report, and if standard validation crashes it degrades to a single
-notice — either way a document nobody examined comes back with zero errors.
+notice. Either way a document nobody examined comes back with zero errors.
 `false` means at least one check did not run, so the report is not evidence of
 anything. A check skipped *on purpose* (the envelope check, when the parse
 stopped early) leaves it `true`, because the finding that justified the skip is
@@ -207,7 +224,7 @@ edi obfuscate`) before the upload **by default**, with `--no-obfuscate` to opt
 out. The default is the safe one deliberately: forgetting a flag must not be what
 puts personal data on the wire, and the scrub costs nothing here because it
 preserves delimiters, element lengths, code values, control numbers, and segment
-counts — and preserves each value's faults, so the server sees the same
+counts, and preserves each value's faults, so the server sees the same
 violations. What changes is that findings quoting a personal value quote the
 replacement, and that a finding about the relationship between two scrubbed
 values (a birth date falling after a service date, say) may not survive.
@@ -235,7 +252,7 @@ endpoint; nothing structured comes back.)
 
 ## Error contract
 
-Controller errors return a flat `{ "error": "<message>", "code": "<code>" }` —
+Controller errors return a flat `{ "error": "<message>", "code": "<code>" }`:
 a human message plus a stable machine code. This is not the platform's nested
 envelope. The `429` response is the exception: it uses the throttle envelope
 `{ "error": { "message": "...", "code": "rate_limited" } }`. Auth (`401`/`403`)
@@ -260,12 +277,24 @@ the contract. Never branch on the body *shape*.
 |        |                                  | or { "error": "Invalid API key" }           |
 | 403    | Key's organization is disabled   | { "error": "Account unavailable" }          |
 | 403    | Service terms not accepted       | { "error": "Service terms must be ..." }    |
-| 404    | Unknown release/segment/element/ | { "error": "Record not found" }             |
-|        | transaction code                 |                                             |
+| 404    | Unknown release in the path      | { "error": "Unknown X12 release '...'. ...",|
+|        |                                  |   "code": "unknown_release" }               |
+| 404    | Unknown segment/element/         | { "error": "Record not found",              |
+|        | transaction code                 |   "code": "not_found" }                     |
+| 404    | No route at that path            | { "error": "No such endpoint",              |
+|        |                                  |   "code": "no_route" }                      |
 | 429    | Rate limit exceeded              | { "error": { "message": "...",              |
 |        |                                  |   "code": "rate_limited" } } + Retry-After  |
 +--------+----------------------------------+---------------------------------------------+
 ```
+
+The two `404` codes exist because `N1` is in every release: without them, a
+mistyped `-r 4010` is reported as "no segment N1", which is never true. The
+`unknown_release` message names the release it did not recognize and points at
+`GET /api/x12/releases`. `no_route` comes from a catch-all at the end of the
+`/api` namespace, so a wrong `api.baseUrl` answers in JSON rather than with the
+HTML 404 page; the CLI reads it as "no such endpoint, check `api.baseUrl`" and
+exits 2.
 
 Suggested CLI handling:
 
@@ -273,8 +302,11 @@ Suggested CLI handling:
 401  -> prompt to run `tedi auth login` or check the configured key
 403 (terms)     -> tell the user to accept the service terms in the browser
 403 (disabled)  -> account unavailable; contact support
-404  -> "No <segment|element|transaction> '<code>' in release <release>."
-        Suggest `tedi x12 releases` or checking the code.
+404 (not_found)      -> "No <segment|element|transaction set> '<code>' in
+        release <release>." Suggest checking the code.
+404 (unknown_release) -> print the server's message and suggest
+        `tedi x12 releases`; do not blame the code that was looked up
+404 (no_route)       -> "No such endpoint at <base>. Check api.baseUrl", exit 2
 400 (invalid_variant) -> should not occur (the CLI controls the variant); a bug
 400 (invalid_limit)   -> the CLI validates --limit before sending, so this means
         this build and the server disagree about what is allowed; say so and
@@ -286,10 +318,10 @@ Suggested CLI handling:
 
 Inspection adds a class the reference endpoints don't have: the payload is the
 user's own file, so a rejection may be something the user can act on rather than
-a CLI bug — but most of them aren't, and the `code` is what says which.
+a CLI bug. Most of them aren't, and the `code` is what says which.
 
 **The rule that matters: a document that could be read answers `200` no matter
-how broken it is.** Everything wrong with it arrives as findings — an unclosed
+how broken it is.** Everything wrong with it arrives as findings: an unclosed
 interchange or an `SE`-count mismatch is a **finding in the report**, not an
 error status. A non-`2xx` means the inspection did not happen.
 
@@ -309,7 +341,7 @@ error status. A non-`2xx` means the inspection did not happen.
 
 Three of these statuses moved: missing and non-string `edi_content` answered
 `422` before they answered `400`, and an oversize body answered `422` before it
-answered `413`. Key on `code`, not status — the CLI does, and falls back to the
+answered `413`. Key on `code`, not status. The CLI does, and falls back to the
 status only for a response carrying no code (where a `422` keeps its historic
 meaning of "could not be read as EDI").
 
@@ -317,6 +349,47 @@ So `422` means the document, *except* for the two codes that don't: an
 `unsupported_release` is a gap in Tediware's reference data and an
 `inspection_failed` is a bug on the server. Neither is a defect in the user's
 document and neither may fail their build.
+
+#### Where the 200/422 line actually falls
+
+The split is invisible from the outside (both exit `1`), so here is each side
+with the document that produces it.
+
+A `422 unsupported_release` is the envelope parsing fine and the release having
+no inspection tables. The message names what it read and what it carries, so a
+caller can act on it:
+
+```
+Unsupported X12 release (ISA12 00602, GS08 006020). Inspection supports
+releases 003060, 004010, 004060, 005010, 006010, 007010, 008010. Contact
+support to have this release added.
+```
+
+The two release sets are maintained separately: reference needs a dictionary
+import, inspection needs a registered parser. They agree today, and nothing
+keeps them in step, so `tedi x12 releases` can list a release inspection
+refuses. This message is what says so, and it reads the supported list from the
+server at the moment of refusal, so it stays current even when this document
+does not.
+
+A `422 unparseable_document` is a document the parser could not read at all: a
+truncated or mangled `ISA`, no segment terminator, bytes that are not X12. The
+body carries an envelope diagnosis built from counts and offsets rather than the
+parser's own message, which could quote the file's contents.
+
+Everything else is a `200` with findings, including the cases that look fatal:
+
+- `ST*252` (a transaction set no table in this release describes) inside a
+  supported release. The `ST..SE` block stays in the tree unvalidated, still
+  counts toward `GE-01`, and raises one `unknown_transaction_set` finding.
+  Before this, the block vanished and the report blamed the envelope for a
+  count the document had right.
+- An `SE` segment count that disagrees with the segments it closes, an unclosed
+  `GS`, a missing `IEA`. Framing faults are findings.
+
+A caller that wants "did this document validate" reads
+`X-Edi-Findings-Errors`; a caller that wants "did the inspection run" reads
+`X-Edi-Inspection-Complete`. The status answers neither.
 
 The CLI prints the server's message verbatim for these. That is safe: on a parse
 failure the server renders an envelope diagnosis rather than the raw parser
@@ -336,7 +409,7 @@ so rather than blaming the file.
 
 Server-side policy stops at reporting facts; how they map to an exit code is the
 CLI's decision, and this is it. The split that matters to a CI job is between a
-bad document and a tool that could not run — collapsing them means an expired API
+bad document and a tool that could not run. Collapsing them means an expired API
 key gets reported as a broken file.
 
 ```
@@ -347,7 +420,7 @@ key gets reported as a broken file.
 | 1    | 200 and errors > 0  (plus notices, with --fail-on notice)           |
 | 1    | 422 unparseable_document                                            |
 | 2    | complete == false and nothing counted as a failure                  |
-| 2    | 200 with no findings headers — unknown is not zero                  |
+| 2    | 200 with no findings headers; unknown is not zero                   |
 | 2    | 422 unsupported_release, 422 inspection_failed                      |
 | 2    | 400, 401, 403, 413, 429, 5xx, transport failure, local usage errors |
 +------+---------------------------------------------------------------------+
@@ -361,7 +434,7 @@ defaults to `error`.
 
 Note the first `2`: findings outrank an incomplete run. A crashed check loses
 findings, it never invents them, so `errors > 0` with `complete == false` exits
-`1` — a real verdict, with the incompleteness noted on stderr as a caveat. Only
+`1`: a real verdict, with the incompleteness noted on stderr as a caveat. Only
 a *silent* incomplete run (nothing found, so nothing to stand on) exits `2`.
 
 On every `200` the report prints in full before the exit code is decided, whatever
@@ -384,7 +457,7 @@ on a trading partner's wire.
 The numbers are server-side and tunable, and this document does not quote them:
 they have drifted from reality here once already. The canonical values and
 their reasoning live in the tediware repo (`doc/architecture/api_authentication.md`
-and `config/initializers/rack_attack.rb`). The CLI never needs them — it
+and `config/initializers/rack_attack.rb`). The CLI never needs them; it
 branches on the `429`.
 
 On `429`, respect `Retry-After` (whole seconds). Because there is a daily
@@ -440,14 +513,14 @@ reference endpoint's query parameters) controls that. What the CLI sends:
 
 | Invocation                       | `limit` sent |
 | -------------------------------- | ------------ |
-| `tedi x12 ele 673` at a terminal  | *(omitted)* — the server's default |
+| `tedi x12 ele 673` at a terminal  | *(omitted)*, the server's default  |
 | `tedi x12 ele 673` piped or redirected | `all` |
 | `tedi x12 ele 673 --all`          | `all` |
 | `tedi x12 ele 673 --limit 50`     | `50` |
 | `--format markdown`, any of the above | as given; the server ignores it |
 
 The piped default is the part worth explaining. A truncated list ends in a footer
-inviting a second lookup — an affordance aimed at a person at a prompt. A pipe, a
+inviting a second lookup, an affordance aimed at a person at a prompt. A pipe, a
 file, or a script cannot act on it, so truncation there spends a round trip the
 caller can never make. Piped output gets the whole list for the same reason it
 gets no color. `--limit` still wins if a caller genuinely wants the short list on
@@ -459,8 +532,8 @@ allowed; it is worded as such rather than as a bare status.
 
 ### Why there is no relevance ordering
 
-The companion idea — put the useful codes first, so a truncated window is worth
-reading — was **dropped: no relevance signal exists.** Recorded so it isn't
+The companion idea, putting the useful codes first so a truncated window is
+worth reading, was **dropped: no relevance signal exists.** Recorded so it isn't
 re-proposed:
 
 - **The existing order is stable, which is worth something.** Codes come back in
@@ -475,7 +548,7 @@ re-proposed:
   carries requirement and position, never a code subset. So `tedi x12 ele 673 --in
   837` is not answerable from licensed reference data, and should not be faked.
   The subsets do exist one layer up, as `implementation_element_uses.allowed_codes`
-  on partner implementations — but that is org-private customer data on a
+  on partner implementations, but that is org-private customer data on a
   different auth plane, so it could only ever back a command scoped to the
   caller's own implementation, never a public `tedi x12` lookup.
 - **There is no deprecation or status flag per code** to order on either; the
@@ -492,38 +565,318 @@ The caller's own operational data, on the same `Authorization: Key` credential.
 Unlike reference, structured JSON is the point here, so every response is JSON
 and every CLI data-plane command offers `--json`.
 
-Two contract differences from the reference plane:
+Three contract differences from the reference plane:
 
 - **Errors are nested**: `{ "error": { "message", "code", "reason"? } }`, not
   the flat `{error, code}` body. `code` names the class of failure (a small
-  closed set); `reason`, when present, names the condition within it.
+  closed set); `reason`, when present, names the condition within it. An
+  unknown path under `/platform` answers this shape with `code: "no_route"`,
+  from a catch-all at the end of the namespace.
 - **No terms gate**: service terms are enforced at use on reference and
   inspection only.
+- **This is the shape `--json` prints.** The CLI reshapes nothing here. A list
+  is `{<collection>: [...], pagination: {hasMore, nextCursor}}`, a show is the
+  object, `whoami` is the identity object, and a receipt is the receipt. The
+  human renderings are derived from these; the JSON is not derived from the
+  renderings. Anything a table shows that the body does not carry (a derived
+  `READY` column, a footer) is the CLI's own presentation and never reaches
+  `--json`.
 
 Endpoints:
 
-- `GET /platform/whoami` — identity: `{organization: {id, name}, keyScope,
-  keyLabel, serviceTermsAccepted}`.
-- `GET /platform/edi_transactions` — list; filters `incoming`,
-  `transaction_set_identifier`, `trace`, `ack_status`; cursor pagination.
-- `GET /platform/edi_transactions/:id` — envelope plus `status`/`flowName`
-  plus the trace's results (with artifact pointers).
-- `POST /platform/edi_transactions/:id/resend` — 202; byte-for-byte
-  re-delivery, queued.
-- `GET /platform/results` — list; filters `node`, `trace`.
-- `GET /platform/results/:id` — one result.
-- `GET /platform/logs?trace=...` — trace-scoped logs, ascending; `trace` is
-  required; filters `level`, `since`.
-- `GET /platform/feed_entries` — ascending feed; an empty page echoes the
-  cursor, which is what makes tailing work.
-- `GET /platform/artifacts/:id` — raw document bytes (attachment).
-- `POST /platform/partners/:key/ts/:code` — own-shape outbound submission.
-- `POST /platform/partners/:key/edi` — raw-EDI inbound submission
-  (`invalid_edi` when contents are not an X12 interchange).
+```
+GET  /platform/whoami                        identity
+GET  /platform/partners                      partner list
+GET  /platform/partners/:key                 one partner, embedded
+GET  /platform/traces/:guid                  one trace, assembled
+GET  /platform/edi_transactions              transaction list
+GET  /platform/edi_transactions/:id          one transaction
+POST /platform/edi_transactions/:id/resend   re-deliver, 202
+GET  /platform/results                       result list
+GET  /platform/results/:id                   one result
+GET  /platform/logs?trace=...                trace logs, oldest first
+GET  /platform/feed_entries                  the feed, oldest first
+GET  /platform/artifacts/:id                 raw document bytes
+POST /platform/partners/:key/ts/:code        outbound submission
+POST /platform/partners/:key/edi             inbound raw-EDI submission
+```
 
-Every list answers `{<rows>, pagination: {hasMore, nextCursor}}` with `limit`
-capped at 100 and an opaque `cursor`. Sandbox-scoped keys are refused
-(`forbidden`) everywhere except `whoami`, `results/:id`, and `artifacts/:id`.
+Every list answers `{<collection>, pagination: {hasMore, nextCursor}}`, takes
+`limit` (default 50, capped at 100) and an opaque `cursor`, and pages on a
+`(created_at, id)` keyset. The same cursor codec backs the MCP tools, so a
+cursor one surface hands out works on the other. Sandbox-scoped keys are
+refused (`forbidden`) everywhere except `whoami`, `results/:id`, and
+`artifacts/:id`; partners and traces are org-wide and are not opted in.
+
+`since` on the logs and feed endpoints is an ISO 8601 timestamp. A value with
+no zone is read in the server's zone, which is not the zone the API prints in,
+so the CLI never sends one: `--since` accepts a full ISO 8601 value with a
+zone, a bare date (read as UTC midnight), or a relative form (`30m`, `2h`,
+`3d`, also `s` and `w`), refuses a zone-less datetime with a hint, and sends
+the resolved UTC instant.
+
+### Identity
+
+`GET /platform/whoami` returns `{organization: {id, name}, keyScope, keyLabel,
+serviceTermsAccepted}`, for any valid key including a sandbox one. `keyScope`
+and `organization` are contract: the CLI exits 2 rather than defaulting when
+either is missing, because a server that drops `keyScope` would otherwise make
+every key look standard.
+
+### Partners
+
+```
+GET /platform/partners
+GET /platform/partners/:key
+```
+
+The first resource of the read-only control plane, and the pattern every later
+one follows. Three rules hold it together:
+
+- **One `Platform<Model>Serializer` per resource, secrets absent rather than
+  masked.** No password, passphrase, private key, webhook secret, sink token,
+  or API key appears at any depth. A spec renders every platform serializer
+  through a populated fixture and fails on a key matching any of those words.
+  The internal serializers are deliberately not reused: `ConnectionSerializer`
+  returns credentials for a non-provisioned connection and `WebhookSerializer`
+  returns a masked secret.
+- **Show embeds, list summarizes.** The show carries `connection`,
+  `internalEnvelope`, `externalEnvelope`, `inboundWebhook`, `outboundWebhook`
+  and `errorWebhook` as full objects, each with its `id` and each rendered by
+  the serializer its own endpoint will use when that endpoint exists. No second
+  GET, and no shape change when it does.
+- **Raw facts, not computed verdicts.** Flow status, whether a mapping or
+  implementation is attached, whether the connection is provisioned. There is
+  no server-side `ready` boolean; the CLI derives its `READY` column from
+  these, and a different client is free to derive something else.
+
+A list row carries `id`, `key`, `name`, `connection: {id, name, kind} | null`,
+`inboundSets: [codes]`, `outboundSets: [codes]`, and
+`flows: [{direction, status}]`. The list is oldest first, so partners read in
+the order they were set up.
+
+The show adds the control-number starting points, the acknowledgment settings,
+the delivery method, and:
+
+```json
+{
+  "transactionSets": [
+    {
+      "transactionSetIdentifier": "850",
+      "direction": "inbound",
+      "mapping": { "id": "...", "name": "ACME 850 inbound" },
+      "implementation": null,
+      "directory": "/in"
+    }
+  ],
+  "flows": [
+    { "id": "...", "name": "ACME Inbound", "direction": "inbound", "status": "active" }
+  ]
+}
+```
+
+Keys resolve in any case and are returned uppercase. A miss is
+`404 not_found` with `reason: "partner"`.
+
+Backs `tedi partner list` and `tedi partner get <key>`.
+
+### Traces
+
+```
+GET /platform/traces/:guid
+```
+
+Everything the platform knows about one processing run, which is the one thing
+a caller polls after a submission:
+
+```json
+{
+  "traceGuid": "...",
+  "processing": false,
+  "ediTransactions": [ /* list rows */ ],
+  "results": [ /* oldest first */ ],
+  "feedEntries": [ /* oldest first */ ],
+  "logs": [ /* oldest first */ ],
+  "artifacts": [
+    { "id": "...", "usage": "output", "contentType": "application/edi-x12",
+      "filename": "856_1042.edi", "resultId": "...", "nodeName": "Implementation" }
+  ]
+}
+```
+
+`artifacts` is every pointer on the trace exactly once, each labelled with the
+result and node that produced it. Pointers are cumulative down a pipeline, so
+the first carrier in creation order is the producer; this is what replaces the
+flattened per-result listing that showed one artifact fourteen times.
+
+`processing` is `true` while the pipeline is still running. Nothing stores a
+running state, so it is derived from the flow graph: a node's job writes its
+result and enqueues its children, so work remains exactly while some node has
+written more results than its children have taken. It is counted per result
+rather than per node, because a splitter writes one result per transaction set
+and the sets flow on one at a time. An errored result is terminal. The
+poll-only terminal writes no result at all, so its work is read from the
+success feed entry it publishes.
+
+That gives `partner send --wait` and any agent one boolean with a defined end
+state, instead of guessing from a log that has not stopped growing.
+
+`logs` here carry the same visibility lag as `GET /platform/logs`: a line is
+committed after its timestamp, so lines younger than about five seconds are
+withheld rather than risk a reader seeing "no more logs" and then an older
+line appearing. A trace that has just finished takes a moment to show its tail.
+
+A guid nothing in the organization carries is `404 not_found`, which
+distinguishes a trace that does not exist from one with nothing to show yet.
+
+Backs `tedi trace <guid>`, and `--trace` on `transaction get` and
+`transaction logs`.
+
+### Transactions
+
+`GET /platform/edi_transactions` filters on `incoming`, `direction`,
+`transaction_set_identifier`, `trace`, `ack_status` and `partner`, newest
+first.
+
+`direction=inbound|outbound` is the vocabulary every other record already used.
+`incoming=true|false` stays, shipped and consumed; both are accepted and the
+serializer emits both. Sending both with values that disagree is
+`400 invalid_parameter` rather than a silent winner. `incoming` and the
+`incoming=` parameter carry `TODO(deprecate)` at their sites and will not be
+removed while a consumer still reads them.
+
+`partner=<key>` matches the counterparty ISA id (the sender inbound, the
+receiver outbound) against each partner's external envelope, and the same
+resolution fills `partnerKey` on a row, so a caller stops inferring a partner
+from a receiver id.
+
+`partnerKey` is absent when nothing matches, and also when two partners share
+that identifier: the resolution is ambiguous and the field is omitted rather
+than guessed at. Those two partners are indistinguishable on the wire, so
+`partner=` returns both their documents while every row's `partnerKey` stays
+absent. It looks like the filter did nothing; it did not.
+
+`duplicateOf` names an earlier inbound transmission from the same sender with
+the same interchange control number, when there was one. It is a note, not a
+refusal: `partner receive` exists to replay documents.
+
+The show narrows `results` to the transmission's own attributed results, oldest
+first, falling back to the whole trace only when nothing is attributed. Two
+documents sharing a trace (an inbound 850 and the 997 sent back for it) no
+longer show each other's results. It also carries:
+
+- `status`, `"delivered"` or `"error"`. `error`, not `errored`: the failure
+  word is now the same on every record the platform returns. This serializer
+  had not shipped when it changed.
+- `acknowledges` and `acknowledgedBy`, the transaction ids on the other end of
+  the acknowledgment, from the Expectation model. A 997 can finally say what it
+  answered.
+- `traceErroredElsewhere` and `traceErroredElsewhereNodeName`, for the case
+  where this document is fine and a sibling on its trace is not.
+- `artifacts`, the four roles the in-app transaction page derives:
+
+```json
+{
+  "artifacts": {
+    "input":  { "id": "...", "usage": "input",  "contentType": "application/edi-x12",
+                "filename": "850_4471.edi",  "resultId": "...", "nodeName": "SFTP Fetch" },
+    "output": { "id": "...", "usage": "output", "contentType": "application/json",
+                "filename": "850_4471.json", "resultId": "...", "nodeName": "EDI to JSON" },
+    "errored": null,
+    "acknowledged": null
+  }
+}
+```
+
+Each role is the artifact that plays the part, flattened together with the
+`resultId` and `nodeName` that produced it, or `null` when the transaction has
+nothing in that role. A role can arrive carrying `resultId` and `nodeName` and
+no artifact fields: an error result writes no file, since the failure is its
+`errorMessage`, and an outbound document's entry result holds the submitted
+JSON in its data rather than as an artifact. Naming the result is still worth
+more than omitting the role.
+
+`POST /platform/edi_transactions/:id/resend` answers `202` with
+`{message, ediTransactionId, traceGuid}`. `traceGuid` is the addition: the
+resend lands on the original trace, and without it the receipt named nothing
+the caller could follow. The replay's results carry `detail.resend: true`, so a
+trace or an error feed entry can tell a replay from the original.
+
+### Results
+
+`GET /platform/results` filters on `trace`, `node` and `status`, newest first.
+
+`node` accepts a node id or a node name, case-insensitively and org-scoped.
+Only the name is displayed anywhere, so an id-only filter was unreachable
+without copying one out of a dashboard URL; the serializer now emits `nodeId`
+as well, which makes the id form discoverable from the rows it returns.
+
+`status=success|error` is sifted in Ruby, not SQL: result metadata is
+encrypted, so the error flag cannot be a column predicate. Rows are read in
+keyset order and sifted until the page fills, with a bounded scan behind it, so
+a filter matching nothing for a long stretch stays a bounded request and hands
+back a cursor at the last row scanned rather than walking the table.
+
+On a row, `status` is `"error"` when the node recorded a failure and
+`"success"` otherwise. A mapping that was delivered flagged is a `success` with
+`detail.mappingFailed: true` beside it: the document went out, and the flag is
+its own axis.
+
+`detail.direction` on a result is **the node's transfer direction, not the
+document's**. A webhook delivering an inbound 850 to your endpoint writes
+`outbound`, because the HTTP call leaves the platform; so does one of the two
+results behind an automatic 997. The feed's `direction` is the document's. They
+disagree by design, which is why `tedi result list` has no `DIR` column: read
+the transaction or the feed entry for the document's direction.
+
+`detail.errors` is an array of strings beside the one-sentence
+`detail.errorMessage`, on the steps that record their findings individually
+(implementation validation does). It exists because the validation message used
+to be one 1,100-character string with serialized JSON embedded in the prose,
+which a caller had to find and parse out of a sentence. `detail.mappingError`
+was already structured this way and is the model it follows.
+
+### Submissions
+
+`POST /platform/partners/:key/ts/:code` takes
+`{contents, filename?, overrides?}` and answers:
+
+```json
+{
+  "message": "Processing queued",
+  "interchangeControlNumber": "1042",
+  "groupControlNumber": "1043",
+  "traceGuid": "...",
+  "ediTransactionId": "..."
+}
+```
+
+`ediTransactionId` is there because the service creates the transmission before
+it answers. Queued means queued: validation, translation and delivery run
+afterwards, so a submission that will fail still answers `200` here and fails
+on the trace seconds later. `tedi partner send --wait` polls
+`GET /platform/traces/:guid` for that verdict.
+
+`contents` that is not a JSON object (a string, an array, `null`) is
+`400 invalid_parameter` with "contents must be a JSON object". It used to reach
+`merge` and produce a Rails 500, which the CLI reported as a server fault and
+the MCP bridge as "server down".
+
+`POST /platform/partners/:key/edi` takes `{contents, filename?}`, where
+`contents` is the raw interchange, and answers `{message, traceGuid}` plus
+`duplicateOf` when the interchange control number and sender ISA id match an
+earlier inbound transmission in this organization.
+
+Two checks run before the document is queued, both `422 invalid_edi`: the ISA
+header has to be readable, and the trailers have to be present and their counts
+plausible (`SE`, `GE`, `IEA`). The trailer check is structural and uses no
+reference data; a document that passes it can still fail the full parse
+downstream. It exists because `head -c 300` on a real 850 passed the header
+check, passed every node, and failed quietly in a mapping.
+
+The submitted bytes are stored as an `input` artifact on the entry node's
+result, as an SFTP fetch already did, so a document pushed in over HTTP can be
+re-inspected or replayed.
 
 ## MCP (`/mcp`)
 
@@ -562,12 +915,40 @@ what lets it meter `Mcp-Name` into the same reference, inspection and platform
 ceilings the REST endpoints use. The bridge only ever copies headers from the
 body, so this refusal is not reachable through it.
 
-What the bridge answers itself, and only these:
+### The legacy-era handshake
+
+The server is modern-only, and every shipping MCP host is a legacy client: it
+opens with `initialize` carrying `protocolVersion: "2025-11-25"`, which the
+server has no method for. The spec's own compatibility matrix says legacy
+client plus modern server fails, and names a dual-era server as the remedy.
+That era lives in the bridge, not in the server.
+
+The bridge answers locally:
+
+- `initialize`: echoes the requested `protocolVersion`, with
+  `capabilities: {tools: {}, resources: {}, prompts: {}}` and
+  `serverInfo: {name: "tediware", version: <cli version>}`. The requested
+  version is logged to stderr once at startup.
+- `notifications/initialized`: swallowed, no reply.
+- `ping`: an empty result.
+
+On every request it does forward, it injects
+`params._meta["io.modelcontextprotocol/protocolVersion"] = "2026-07-28"` when
+absent, and the mirrored `MCP-Protocol-Version` header follows. A request that
+carries a different version explicitly is still refused, naming the supported
+one. So a host that knows nothing about 2026-07-28 connects, lists tools, and
+calls them, and the server never sees a version it does not speak.
+
+This is a compatibility shim with an expiry: `TEDI-540`, due 2027-09-01,
+revisits whether the legacy era still needs answering. Direct HTTP from a
+legacy host is not supported and is not planned; the bridge is the path.
+
+What else the bridge answers itself, and only these:
 
 - A line that is not JSON: `-32700`. A JSON value that is not a JSON-RPC 2.0
   request: `-32600`. Both on `id: null`.
-- A request naming no protocol version in `_meta` (a legacy `initialize`, for
-  instance): `-32022` with `data.supported: ["2026-07-28"]`, without forwarding.
+- A forwarded request naming a protocol version other than `2026-07-28` in
+  `_meta`: `-32022` with `data.supported: ["2026-07-28"]`, without forwarding.
   The server would call this a header mismatch, which is the wrong words on a
   transport with no headers.
 - A `tools/call`, `resources/read` or `prompts/get` with no string `name` (or
@@ -605,9 +986,46 @@ data-plane tools return `structuredContent` freely, as `--json` does.
 
 Sandbox keys are refused on `/mcp` outright (`403`, `sandbox_key_not_supported`).
 
+### Tool arguments
+
+Argument names are camelCase, matching the REST query parameters and the keys
+the tools return: `transactionSetIdentifier`, `ackStatus`, `transactionId`,
+`partnerKey`. `x12_releases` returns `publishedAt`. Nothing MCP had shipped
+when this changed, so there is no compatibility window to respect.
+
+Arguments are validated against each tool's declared schema before the tool
+runs. Every schema already said `additionalProperties: false`; now the server
+enforces it, so a misspelled argument is a refusal rather than a filter that
+was silently dropped. `{"transactionSetIdentifier": "850"}` on a tool that
+expected the snake_case name used to return the whole organization with
+`isError: false`.
+
+Three further rules the validator applies:
+
+- An empty string for an identifying argument (`trace`, `partner`,
+  `transactionId`, `node`) is `isError: true`, not "no filter". A blank shell
+  variable used to return everything.
+- `direction` and `status` carry enums and refuse a bad value with the allowed
+  list, as `ackStatus` and `level` already did.
+- A `limit` outside 1 to 100 is an error rather than a silent clamp, since the
+  description already promised that range.
+
+The tool list adds `partner_list`, `partner_get` and `trace_get`, mirroring the
+endpoints above.
+
+Two response details worth knowing. The `content[0].text` block beside
+`structuredContent` is now a one-line summary (record kind, id, status) rather
+than the same JSON again; `transaction_get` was returning about 20 KB twice.
+And an unhandled exception, once the request id is known, renders JSON-RPC
+`-32603 Internal error` with that id, so the bridge can say "the server
+faulted" rather than `-32002 upstream_error`, which reads as "server down".
+
 ## Not available yet (do not build against)
 
-- Any control-plane endpoints (connection, partner, mapping, and flow CRUD).
-  These are not built.
+- Control-plane writes, and reads of anything but partners. Connection,
+  envelope, webhook, flow, mapping and implementation reads are the next phase:
+  their platform serializers exist (the partner show embeds them) but their
+  standalone endpoints do not. There is no `control` scope yet either; partner
+  reads sit under `standard`, and nothing here forecloses adding one.
 - The JSON `index`/`show`, `search`, and `favourites` actions under the
   reference namespace are web-app internals; the CLI does not use them.
