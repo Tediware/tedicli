@@ -830,8 +830,10 @@ when nothing matches or when two partners share the identifier, rather than
 guessed at.
 
 `duplicateOf` names an earlier inbound transmission from the same sender with
-the same interchange control number, when there was one. It is a note, not a
-refusal: `partner receive` exists to replay documents.
+the same interchange control number, when there was one. The server records it
+when the transmission is created, whatever the transport (SFTP, AS2, sandbox
+pickup, or `partner receive`), and matches across the whole organization. It is
+a note, not a refusal: the repeat is processed and gets its own 997.
 
 The show narrows `results` to the transmission's own attributed results, oldest
 first, falling back to the whole trace only when nothing is attributed. Two
@@ -936,9 +938,10 @@ on the trace seconds later. `tedi partner send --wait` polls
 the MCP bridge as "server down".
 
 `POST /platform/partners/:key/edi` takes `{contents, filename?}`, where
-`contents` is the raw interchange, and answers `{message, traceGuid}` plus
-`duplicateOf` when the interchange control number and sender ISA id match an
-earlier inbound transmission in this organization.
+`contents` is the raw interchange, and answers `{message, traceGuid}`. The
+receipt no longer carries `duplicateOf`: the server answers before the
+transmission exists, so a replay is named on the transaction it creates
+(`transaction get`, `trace`), not here.
 
 Two checks run before the document is queued, both `422 invalid_edi`: the ISA
 header has to be readable, and the trailers have to be present and their counts

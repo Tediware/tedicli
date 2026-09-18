@@ -212,8 +212,6 @@ export interface PartnerSendReceipt {
 export interface PartnerReceiveReceipt {
   message?: string
   traceGuid: string
-  /** The earlier inbound transaction with the same sender and control number, when this is a replay. */
-  duplicateOf?: string
 }
 
 /** Receipt for a resend (`transaction resend`). */

@@ -9,7 +9,7 @@ export default class PartnerReceive extends PlatformCommand<typeof PartnerReceiv
 
   static description = `Sends the document to the Tediware server, which processes it as if it had arrived over SFTP or AS2; a standard API key is required.
 
-A document already received (same sender, same interchange control number) is accepted again and processed again, and a 997 is re-issued when the partner expects one; the receipt names the earlier transaction. A file missing its SE, GE or IEA trailers is refused before anything runs.`
+A document already received (same sender, same interchange control number) is accepted again and processed again, and a 997 is re-issued when the partner expects one. Once it is processed, 'tedi transaction get' and 'tedi trace' name the earlier transaction. A file missing its SE, GE or IEA trailers is refused before anything runs.`
 
   static examples = [
     '<%= config.bin %> partner receive ACME 850.edi',
@@ -35,7 +35,6 @@ A document already received (same sender, same interchange control number) is ac
 
     this.log('Processing queued.')
     this.log(`  Trace ${receipt.traceGuid}`)
-    if (receipt.duplicateOf) this.log(`  Duplicate of ${receipt.duplicateOf}`)
     this.log(`Follow it with: tedi trace ${receipt.traceGuid}`)
     return receipt
   }
