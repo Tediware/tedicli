@@ -2,13 +2,15 @@ import {Args} from '@oclif/core'
 
 import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
 import {PlatformResult} from '../../lib/platform.js'
-import {artifactTable, errorLines} from '../../lib/render.js'
+import {artifactTable, errorLines, warningLines} from '../../lib/render.js'
 import {cell, formatTime} from '../../lib/table.js'
 
 export default class ResultGet extends PlatformCommand<typeof ResultGet> {
   static summary = 'Show one processing result, including its error and its stored artifacts.'
 
-  static description = SERVER_DATA
+  static description = `${SERVER_DATA}
+
+Warnings are the non-fatal notes this result raised. They never change the status: a result that delivered and raised one still reads success.`
 
   static examples = ['<%= config.bin %> result get 4d0e9f5a-...', '<%= config.bin %> result get 4d0e9f5a-... --json']
 
@@ -22,6 +24,12 @@ export default class ResultGet extends PlatformCommand<typeof ResultGet> {
 
     this.log(`Node       ${cell(result.nodeName)}`)
     this.log(`Status     ${result.status ?? (result.detail.errorMessage ? 'error' : 'success')}`)
+    // Under the status, for the same reason as on a transaction: the warnings
+    // qualify the outcome rather than replace it. No result id here; it is the
+    // result being shown.
+    warningLines(result.detail.warnings ?? []).forEach((line, i) => {
+      this.log(`${(i === 0 ? 'Warnings' : '').padEnd(11)}${line}`)
+    })
     this.log(`Partner    ${cell(result.detail.partner?.key)}`)
     this.log(`Direction  ${cell(result.detail.direction)} (the node's, not the document's)`)
     this.log(`Trace      ${cell(result.traceGuid)}`)

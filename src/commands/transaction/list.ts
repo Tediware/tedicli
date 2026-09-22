@@ -2,6 +2,7 @@ import {Flags} from '@oclif/core'
 
 import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
 import {TransactionPage} from '../../lib/platform.js'
+import {statusCell} from '../../lib/render.js'
 import {cell, formatTime, renderTable} from '../../lib/table.js'
 
 export default class TransactionList extends PlatformCommand<typeof TransactionList> {
@@ -9,12 +10,13 @@ export default class TransactionList extends PlatformCommand<typeof TransactionL
 
   static description = `${SERVER_DATA}
 
-STATUS is error when a result on the document's processing run recorded a failure, and delivered otherwise. ACK is the acknowledgment the partner sent back: accepted, rejected, unacknowledged (one is expected and has not arrived), or n/a (none is expected: inbound documents and 997s).`
+STATUS is processing until the document's run records its first result, error when a result on the run recorded a failure, and delivered otherwise. A warning count beside it counts the non-fatal notes the run raised; warnings are their own axis and never change the status, so a delivered document that raised one still reads delivered. ACK is the acknowledgment the partner sent back: accepted, rejected, unacknowledged (a delivered document is waiting on one), or n/a (none is expected: inbound documents, 997s, and documents that never went out).`
 
   static examples = [
     '<%= config.bin %> transaction list',
     '<%= config.bin %> transaction list --direction outbound --ack unacknowledged',
     '<%= config.bin %> transaction list --status error',
+    '<%= config.bin %> transaction list --warnings',
     '<%= config.bin %> transaction list --partner ACME --set 850 --json',
   ]
 
@@ -27,12 +29,16 @@ STATUS is error when a result on the document's processing run recorded a failur
     trace: Flags.string({description: 'Filter by trace GUID.'}),
     status: Flags.string({
       description: 'Filter by processing status.',
-      options: ['delivered', 'error'],
+      options: ['delivered', 'error', 'processing'],
     }),
     ack: Flags.string({
       description:
-        'Filter by acknowledgment status. acknowledged means accepted or rejected; unacknowledged means one is expected and has not arrived.',
+        'Filter by acknowledgment status. acknowledged means accepted or rejected; unacknowledged means a delivered document is still waiting on one.',
       options: ['accepted', 'rejected', 'acknowledged', 'unacknowledged'],
+    }),
+    warnings: Flags.boolean({
+      allowNo: true,
+      description: 'Only documents that raised warnings; --no-warnings for only the ones that raised none. Omit for both.',
     }),
   }
 
@@ -45,6 +51,7 @@ STATUS is error when a result on the document's processing run recorded a failur
       trace: this.flags.trace,
       ackStatus: this.flags.ack,
       status: this.flags.status,
+      warnings: this.flags.warnings,
       limit: this.flags.limit,
       cursor: this.flags.cursor,
     })
@@ -63,7 +70,7 @@ STATUS is error when a result on the document's processing run recorded a failur
           cell(t.transactionSetIdentifier),
           cell(t.partnerKey),
           cell(t.interchangeControlNumber),
-          cell(t.status),
+          statusCell(t.status, t.warningCount),
           t.acknowledgmentStatus ?? 'n/a',
           formatTime(t.createdAt),
         ]),

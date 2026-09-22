@@ -673,6 +673,22 @@ describe('HttpApiClient', () => {
       assert.deepEqual(page, {ediTransactions: [{id: 't1'}], pagination: {hasMore: true, nextCursor: 'abc'}})
     })
 
+    it('transactionList sends the warnings filter as true/false, and omits it when unset', async () => {
+      const body = JSON.stringify({ediTransactions: [], pagination: {hasMore: false, nextCursor: null}})
+      const only = stubFetch(() => ({body}))
+      await client('sk-test').transactionList({warnings: true})
+      assert.equal(new URL(only.calls[0].url).searchParams.get('warnings'), 'true')
+
+      // false is a filter of its own, not "no filter": it must survive.
+      const none = stubFetch(() => ({body}))
+      await client('sk-test').transactionList({warnings: false})
+      assert.equal(new URL(none.calls[0].url).searchParams.get('warnings'), 'false')
+
+      const unset = stubFetch(() => ({body}))
+      await client('sk-test').transactionList({})
+      assert.equal(new URL(unset.calls[0].url).searchParams.get('warnings'), null)
+    })
+
     it('words an invalid_parameter 400 as the caller\'s input, exit 2', async () => {
       stubFetch(() => ({status: 400, body: JSON.stringify({error: {message: 'Invalid cursor.', code: 'invalid_parameter'}})}))
       await assert.rejects(client('sk-test').transactionList({cursor: 'garbage'}), (err: unknown) => {

@@ -422,6 +422,7 @@ export class MockApiClient implements ApiClient {
     if (query.partner) rows = rows.filter((t) => t.partnerKey?.toLowerCase() === query.partner?.toLowerCase())
     if (query.trace) rows = rows.filter((t) => t.traceGuid === query.trace)
     if (query.status) rows = rows.filter((t) => t.status === query.status)
+    if (query.warnings !== undefined) rows = rows.filter((t) => ((t.warningCount ?? 0) > 0) === query.warnings)
     return {ediTransactions: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
   }
 
@@ -430,20 +431,34 @@ export class MockApiClient implements ApiClient {
     const row = MOCK_TRANSACTIONS.find((t) => t.id === id)
     if (!row) throw new DataNotFoundError('transaction', id)
     const own = MOCK_RESULTS.filter((r) => r.traceGuid === row.traceGuid)
-    const first = own[0]
+    // The server gathers a transaction's warnings from its own results and
+    // stamps each with the result that raised it; the mock does the same so the
+    // count on the list row and the array on the show cannot drift apart.
+    const warnings = own.flatMap((r) => (r.detail.warnings ?? []).map((w) => ({...w, resultId: r.id})))
+    // Each role is the artifact whose usage plays that part, labeled with the
+    // result that wrote it, as the server derives them.
+    const role = (usage: string) => {
+      for (const r of own) {
+        const found = r.detail.artifacts?.find((a) => a.usage === usage)
+        if (found) return {...found, resultId: r.id, nodeName: r.nodeName}
+      }
+      return null
+    }
     return {
       ...row,
       status: 'delivered',
+      warningCount: warnings.length,
+      warnings,
       flowName: 'Mock Inbound Flow',
       traceErroredElsewhere: false,
       acknowledges: null,
       acknowledgedBy: null,
       results: own,
       artifacts: {
-        input: first ? {...first.detail.artifacts![0]!, resultId: first.id, nodeName: first.nodeName} : null,
-        output: null,
-        errored: null,
-        acknowledged: null,
+        input: role('input'),
+        output: role('output'),
+        errored: role('errored'),
+        acknowledged: role('acknowledged'),
       },
     }
   }
@@ -823,6 +838,7 @@ const MOCK_TRANSACTIONS: TransactionSummary[] = [
     incoming: true,
     direction: 'inbound',
     status: 'delivered',
+    warningCount: 0,
     acknowledgmentStatus: null,
     partnerKey: 'ACME',
     resendCount: 0,
@@ -844,6 +860,7 @@ const MOCK_TRANSACTIONS: TransactionSummary[] = [
     incoming: false,
     direction: 'outbound',
     status: 'delivered',
+    warningCount: 1,
     acknowledgmentStatus: 'accepted',
     partnerKey: 'ACME',
     resendCount: 0,
@@ -869,6 +886,31 @@ const MOCK_RESULTS: PlatformResult[] = [
         {id: 'mock-artifact-1', usage: 'input', contentType: 'application/edi-x12', filename: 'in.edi'},
       ],
       transformations: ['EDI Endpoint', 'EDI to JSON'],
+    },
+  },
+  // Delivered with a warning: `status` stays success and `mappingFailed` stays
+  // where it was, and the warning channel says the same thing in the shape
+  // every code can branch on.
+  {
+    id: 'mock-result-2',
+    traceGuid: 'mock-trace-outbound',
+    nodeName: 'JSON to EDI',
+    nodeId: 'mock-node-3',
+    status: 'success',
+    createdAt: '2026-01-02T12:00:00Z',
+    updatedAt: '2026-01-02T12:00:01Z',
+    detail: {
+      direction: 'outbound',
+      partner: {key: 'ACME'},
+      mappingFailed: true,
+      warnings: [
+        {
+          code: 'mapping_failed',
+          message: '(synthetic) The mapping produced no document; the source was delivered unmapped.',
+          detail: {mappingName: 'Mock Acme 856'},
+        },
+      ],
+      artifacts: [{id: 'mock-artifact-2', usage: 'output', contentType: 'application/edi-x12', filename: 'out.edi'}],
     },
   },
 ]
@@ -1505,6 +1547,7 @@ export class HttpApiClient implements ApiClient {
       ack_status: query.ackStatus,
       status: query.status,
       partner: query.partner,
+      warnings: query.warnings,
       limit: query.limit,
       cursor: query.cursor,
     })

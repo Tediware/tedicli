@@ -3,7 +3,7 @@ import {Args, Flags} from '@oclif/core'
 import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
 import {TransactionDetail} from '../../lib/platform.js'
 import {TediError} from '../../lib/errors.js'
-import {errorLines, roleLine} from '../../lib/render.js'
+import {errorLines, roleLine, warningLines} from '../../lib/render.js'
 import {cell, formatTime} from '../../lib/table.js'
 
 export default class TransactionGet extends PlatformCommand<typeof TransactionGet> {
@@ -11,7 +11,9 @@ export default class TransactionGet extends PlatformCommand<typeof TransactionGe
 
   static description = `${SERVER_DATA}
 
-Shows what the transaction page in the app shows, minus the logs (\`tedi transaction logs\`). For everything on the trace, including other documents that share it, use \`tedi trace\`.`
+Shows what the transaction page in the app shows, minus the logs (\`tedi transaction logs\`). For everything on the trace, including other documents that share it, use \`tedi trace\`.
+
+Warnings are non-fatal notes the run raised, each naming the result that raised it. They never change the status: a delivered document that raised one still reads delivered.`
 
   static examples = [
     '<%= config.bin %> transaction get 8f14e45f-...',
@@ -40,6 +42,10 @@ Shows what the transaction page in the app shows, minus the logs (\`tedi transac
       ['Transaction set', cell(txn.transactionSetIdentifier)],
       ['Partner', cell(txn.partnerKey)],
       ['Status', txn.status],
+      // Warnings sit under the status because that is the question they
+      // qualify: the run is delivered *and* raised these. An empty label keeps
+      // the second and later ones in the value column.
+      ...warningLines(txn.warnings ?? []).map((line, i): [string, string] => [i === 0 ? 'Warnings' : '', line]),
       ['Flow', cell(txn.flowName)],
       ['Sender', `${cell(txn.senderQualifier)} ${cell(txn.senderExtid)}`],
       ['Receiver', `${cell(txn.receiverQualifier)} ${cell(txn.receiverExtid)}`],

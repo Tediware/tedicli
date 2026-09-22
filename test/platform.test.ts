@@ -91,6 +91,41 @@ describe('data-plane commands (mock backend)', () => {
     assert.doesNotMatch(help.stdout, /--ts/)
   })
 
+  it('transaction list shows the warning count beside the status, never as the status', async () => {
+    const {stdout, error} = await run(['transaction', 'list'])
+    assert.equal(error, undefined)
+    // The warning is its own axis: the document still reads delivered.
+    assert.match(stdout, /mock-txn-2\s+outbound\s+856\s+ACME\s+000000002\s+delivered \(1 warning\)\s+accepted/)
+    assert.match(stdout, /mock-txn-1\s+inbound\s+850\s+ACME\s+000000001\s+delivered\s+n\/a/)
+    assert.doesNotMatch(stdout, /^\s*ID.*\bWARN/m)
+  })
+
+  it('transaction list --warnings and --no-warnings are the two filters', async () => {
+    const withWarnings = await run(['transaction', 'list', '--warnings'])
+    assert.equal(withWarnings.error, undefined)
+    assert.match(withWarnings.stdout, /mock-txn-2/)
+    assert.doesNotMatch(withWarnings.stdout, /mock-txn-1/)
+
+    const without = await run(['transaction', 'list', '--no-warnings'])
+    assert.match(without.stdout, /mock-txn-1/)
+    assert.doesNotMatch(without.stdout, /mock-txn-2/)
+
+    // Omitted is not the same as false: both rows come back.
+    const both = await run(['transaction', 'list'])
+    assert.match(both.stdout, /mock-txn-1/)
+    assert.match(both.stdout, /mock-txn-2/)
+  })
+
+  it('transaction list --json carries warningCount on every row', async () => {
+    const {stdout, error} = await run(['transaction', 'list', '--json'])
+    assert.equal(error, undefined)
+    const rows = JSON.parse(stdout).ediTransactions
+    assert.deepEqual(
+      rows.map((t: {id: string; warningCount: number}) => [t.id, t.warningCount]),
+      [['mock-txn-1', 0], ['mock-txn-2', 1]],
+    )
+  })
+
   it('--limit is bounded at parse time', async () => {
     const {error, exit} = await run(['transaction', 'list', '--limit', '101'])
     assert.match(error?.message ?? '', /less than or equal to 100/)
@@ -119,6 +154,30 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(both.error?.message ?? '', /not both/)
     const neither = await run(['transaction', 'get'])
     assert.match(neither.error?.message ?? '', /A transaction id or --trace/)
+  })
+
+  it('transaction get prints the warnings under the status, with the result that raised each', async () => {
+    const {stdout, error} = await run(['transaction', 'get', 'mock-txn-2'])
+    assert.equal(error, undefined)
+    assert.match(
+      stdout,
+      /Status\s+delivered\nWarnings\s+mapping_failed\s+\(synthetic\) The mapping produced no document[^\n]*\(result mock-result-2\)\nFlow/,
+    )
+    // A transaction with no warnings gains no line at all.
+    const quiet = await run(['transaction', 'get', 'mock-txn-1'])
+    assert.doesNotMatch(quiet.stdout, /Warnings/)
+  })
+
+  it('transaction get --json carries the warnings array and the count', async () => {
+    const {stdout, error} = await run(['transaction', 'get', 'mock-txn-2', '--json'])
+    assert.equal(error, undefined)
+    const txn = JSON.parse(stdout)
+    assert.equal(txn.status, 'delivered')
+    assert.equal(txn.warningCount, 1)
+    assert.equal(txn.warnings.length, 1)
+    assert.equal(txn.warnings[0].code, 'mapping_failed')
+    assert.equal(txn.warnings[0].resultId, 'mock-result-2')
+    assert.deepEqual(txn.warnings[0].detail, {mappingName: 'Mock Acme 856'})
   })
 
   it('transaction get exits 1 for an unknown id and trims whitespace off ids', async () => {
@@ -166,6 +225,41 @@ describe('data-plane commands (mock backend)', () => {
     assert.doesNotMatch(stdout, /\bDIR\b/)
     const errors = await run(['result', 'list', '--status', 'error'])
     assert.match(errors.stdout, /No results match/)
+  })
+
+  it('result get lists the warnings under the status, without repeating the result id', async () => {
+    const {stdout, error} = await run(['result', 'get', 'mock-result-2'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Status\s+success\nWarnings\s+mapping_failed\s+\(synthetic\) The mapping produced no document[^\n]*\nPartner/)
+    // The result being shown is the one that raised it; naming it again is noise.
+    assert.doesNotMatch(stdout, /result mock-result-2/)
+    const quiet = await run(['result', 'get', 'mock-result-1'])
+    assert.doesNotMatch(quiet.stdout, /Warnings/)
+  })
+
+  it('result get --json carries detail.warnings through unchanged', async () => {
+    const {stdout, error} = await run(['result', 'get', 'mock-result-2', '--json'])
+    assert.equal(error, undefined)
+    const result = JSON.parse(stdout)
+    assert.equal(result.status, 'success')
+    assert.deepEqual(result.detail.warnings, [
+      {
+        code: 'mapping_failed',
+        message: '(synthetic) The mapping produced no document; the source was delivered unmapped.',
+        detail: {mappingName: 'Mock Acme 856'},
+      },
+    ])
+  })
+
+  it('result list counts warnings beside the status and --json keeps them', async () => {
+    const {stdout, error} = await run(['result', 'list'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /mock-result-2\s+JSON to EDI\s+success \(1 warning\)\s+ACME/)
+    assert.match(stdout, /mock-result-1\s+EDI Endpoint\s+success\s+ACME/)
+
+    const json = await run(['result', 'list', '--json'])
+    const rows = JSON.parse(json.stdout).results
+    assert.equal(rows.find((r: {id: string}) => r.id === 'mock-result-2').detail.warnings[0].code, 'mapping_failed')
   })
 
   it('feed list renders entries with a 24-hour footer by default', async () => {

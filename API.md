@@ -804,14 +804,29 @@ Backs `tedi trace <guid>`, and `--trace` on `transaction get` and
 ### Transactions
 
 `GET /platform/edi_transactions` filters on `incoming`, `direction`,
-`transaction_set_identifier`, `trace`, `ack_status`, `status` and `partner`,
-newest first.
+`transaction_set_identifier`, `trace`, `ack_status`, `status`, `partner` and
+`warnings`, newest first.
 
-`status=delivered|error` is the processing status the show already carried,
-now stored on the row so the list can filter on it in SQL, and emitted on every
-list row. It is `error` when a result on the document's run recorded a
-failure and does not change back: a resend that succeeds leaves the original
-failure on the trace. Backs `--status` on `transaction list`.
+`status=delivered|error|processing` is the processing status the show already
+carried, now stored on the row so the list can filter on it in SQL, and emitted
+on every list row. It is `processing` until the document's run records its
+first result, `error` when a result on the run recorded a failure, and
+`delivered` otherwise. `error` does not change back: a resend that succeeds
+leaves the original failure on the trace. A row that stays `processing` is one
+whose run stopped before recording anything. Backs `--status` on
+`transaction list`.
+
+`ack_status=unacknowledged` means a delivered document waiting on its 997.
+`acknowledgmentStatus` is `null`, not `unacknowledged`, on a document that is
+still processing or that errored before anything went out, since the partner
+has nothing to answer; a 997 that did arrive is reported whatever the status.
+
+`warnings=true|false` filters on whether the document's run raised any, and
+every list row carries `warningCount`, an integer. Warnings are a channel of
+their own and never touch `status`: a delivered document that raised one is
+still `delivered`, so a caller filtering on `status=error` keeps seeing exactly
+what it saw before. Backs `--warnings` / `--no-warnings` on `transaction list`,
+and the count printed beside STATUS.
 
 `direction=inbound|outbound` is the vocabulary every other record already used.
 `incoming=true|false` stays, shipped and consumed; both are accepted and the
@@ -840,14 +855,20 @@ first, falling back to the whole trace only when nothing is attributed. Two
 documents sharing a trace (an inbound 850 and the 997 sent back for it) no
 longer show each other's results. It also carries:
 
-- `status`, `"delivered"` or `"error"`. `error`, not `errored`: the failure
-  word is now the same on every record the platform returns. This serializer
-  had not shipped when it changed.
+- `status`, `"processing"`, `"delivered"` or `"error"`. `error`, not
+  `errored`: the failure word is now the same on every record the platform
+  returns. This serializer had not shipped when it changed.
 - `acknowledges` and `acknowledgedBy`, the transaction ids on the other end of
   the acknowledgment, from the Expectation model. A 997 can finally say what it
   answered.
 - `traceErroredElsewhere` and `traceErroredElsewhereNodeName`, for the case
   where this document is fine and a sibling on its trace is not.
+- `warningCount` and `warnings`, the channel above in full. Each entry is
+  `{code, message, detail?, resultId}`: `code` is the stable identifier to
+  branch on (`mapping_failed` is the only one today), `message` is the prose,
+  `detail` is an optional object whose shape depends on the code, and
+  `resultId` names the result that raised it. Backs the lines `transaction get`
+  prints under the status.
 - `artifacts`, the four roles the in-app transaction page derives:
 
 ```json
@@ -896,6 +917,13 @@ On a row, `status` is `"error"` when the node recorded a failure and
 `"success"` otherwise. A mapping that was delivered flagged is a `success` with
 `detail.mappingFailed: true` beside it: the document went out, and the flag is
 its own axis.
+
+`detail.warnings` carries the same entries the transaction's `warnings` does,
+minus `resultId`, since here the result is the one being read. It is the
+general form of the `mappingFailed` flag: a code to branch on and prose to show,
+for every non-fatal note a node can raise, and `mapping_failed` is the first
+code to move into it. The flag stays where it was. `result get` prints the
+entries under the status; `result list` counts them beside STATUS.
 
 `detail.direction` on a result is **the node's transfer direction, not the
 document's**. A webhook delivering an inbound 850 to your endpoint writes

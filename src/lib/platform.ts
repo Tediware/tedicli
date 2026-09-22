@@ -32,6 +32,25 @@ export interface PageQuery {
 
 export type Direction = 'inbound' | 'outbound'
 
+/**
+ * A non-fatal note a result raised on a document. Warnings are their own axis:
+ * they never change `status`, so a delivered document that raised one still
+ * reads `delivered`, and a caller that ignores them sees what it always saw.
+ */
+export interface Warning {
+  /** Stable identifier to branch on; `mapping_failed` is the only one today. */
+  code: string
+  /** The prose to show a person. */
+  message: string
+  /** Extra structure whose shape depends on `code`; open-ended on purpose. */
+  detail?: Record<string, unknown>
+}
+
+/** A warning as a transaction carries it: the same entry, plus who raised it. */
+export interface TransactionWarning extends Warning {
+  resultId: string
+}
+
 /** The list row for an EDI transaction (envelope metadata only). */
 export interface TransactionSummary {
   id: string
@@ -48,7 +67,9 @@ export interface TransactionSummary {
   incoming: boolean
   direction: Direction
   /** Absent on a server that predates the stored status. */
-  status?: 'error' | 'delivered'
+  status?: 'error' | 'delivered' | 'processing'
+  /** How many warnings the document's results raised. Absent on a server that predates the channel. */
+  warningCount?: number
   acknowledgmentStatus?: 'accepted' | 'rejected' | 'unacknowledged' | null
   partnerKey?: string | null
   duplicateOf?: string | null
@@ -65,6 +86,8 @@ export interface TransactionListQuery extends PageQuery {
   ackStatus?: string
   status?: string
   partner?: string
+  /** True for only documents that raised warnings, false for only those that did not. */
+  warnings?: boolean
 }
 
 export interface TransactionPage extends Paged {
@@ -89,6 +112,8 @@ export interface ResultDetail {
   /** The individual findings behind `errorMessage`, when the failing step recorded them. */
   errors?: string[]
   mappingFailed?: boolean
+  /** The warnings this result raised; the transaction's entries minus `resultId`. */
+  warnings?: Warning[]
   resend?: boolean
   partner?: {key: string}
   artifacts?: ArtifactPointer[]
@@ -134,12 +159,14 @@ export interface ArtifactRole {
 
 /** The show shape: the envelope plus processing outcome and the transmission's own results. */
 export interface TransactionDetail extends TransactionSummary {
-  status: 'error' | 'delivered'
+  status: 'error' | 'delivered' | 'processing'
   flowName?: string | null
   traceErroredElsewhere?: boolean
   traceErroredElsewhereNodeName?: string | null
   acknowledges?: string | null
   acknowledgedBy?: string | null
+  /** Every warning the transmission's results raised, each naming the result. */
+  warnings?: TransactionWarning[]
   results: PlatformResult[]
   artifacts: {
     input: ArtifactRole | null

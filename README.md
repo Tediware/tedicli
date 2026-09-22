@@ -273,7 +273,8 @@ tedi partner receive ACME 850.edi           # raw partner EDI into the inbound f
 tedi trace <guid>                    # everything on a trace: transactions, results, feed, artifacts, logs
 
 tedi transaction list --direction outbound --ack unacknowledged
-tedi transaction get <id>            # envelope, outcome, acknowledgment, its own artifacts
+tedi transaction list --warnings     # only documents whose run raised a warning
+tedi transaction get <id>            # envelope, outcome, acknowledgment, warnings, its own artifacts
 tedi transaction get --trace <guid>  # the same, found by the trace a receipt handed back
 tedi transaction logs <id>           # the trace's processing logs
 tedi transaction resend <id>         # re-deliver an outbound document
@@ -318,6 +319,16 @@ with the `tedi trace <guid>` line to follow it with. Direction is always
 transaction set; `--since` takes an ISO 8601 timestamp with a zone, a bare date,
 or a relative form such as `2h`. Timestamps print as `YYYY-MM-DD HH:MM:SSZ`.
 `--json` prints the server's response unchanged.
+
+Warnings are non-fatal notes a run raised, and they are their own axis: they
+never change a document's status, so one that was delivered still reads
+`delivered`. `transaction list` and `result list` show the count beside STATUS
+when there is one; `transaction get` and `result get` print each as its stable
+code and the prose behind it, and on a transaction each names the result that
+raised it. `--warnings` and `--no-warnings` on `transaction list` filter on
+having any. `--json` carries `warningCount` and the `warnings` array
+(`detail.warnings` on a result), so a script can branch on the code rather than
+on the prose.
 
 The feed is a forward-only stream, so it reads oldest first and a bare
 `feed list` shows the last 24 hours with a footer saying so. `--since` or

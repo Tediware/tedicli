@@ -2,6 +2,7 @@ import {Flags} from '@oclif/core'
 
 import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
 import {ResultPage} from '../../lib/platform.js'
+import {statusCell} from '../../lib/render.js'
 import {cell, formatTime, renderTable} from '../../lib/table.js'
 
 export default class ResultList extends PlatformCommand<typeof ResultList> {
@@ -9,7 +10,9 @@ export default class ResultList extends PlatformCommand<typeof ResultList> {
 
   static description = `${SERVER_DATA}
 
-A result is one node's work on one document. Its direction (in --json) is the node's transfer direction, not the document's; filter documents by direction on \`tedi transaction list\` or \`tedi feed list\`.`
+A result is one node's work on one document. Its direction (in --json) is the node's transfer direction, not the document's; filter documents by direction on \`tedi transaction list\` or \`tedi feed list\`.
+
+A warning count beside STATUS counts the non-fatal notes the node raised; warnings never change the status, and \`result get\` prints them in full.`
 
   static examples = [
     '<%= config.bin %> result list',
@@ -48,7 +51,7 @@ A result is one node's work on one document. Its direction (in --json) is the no
         ...page.results.map((r) => [
           r.id,
           cell(r.nodeName),
-          r.status ?? (r.detail.errorMessage ? 'error' : 'success'),
+          statusCell(r.status ?? (r.detail.errorMessage ? 'error' : 'success'), r.detail.warnings?.length),
           cell(r.detail.partner?.key),
           cell(r.traceGuid),
           formatTime(r.createdAt),

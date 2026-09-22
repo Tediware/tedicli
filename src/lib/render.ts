@@ -3,7 +3,7 @@
  * and an artifact read the same whichever command shows them.
  */
 
-import {ArtifactPointer, ArtifactRole, PlatformResult, ResultDetail, TraceArtifact} from './platform.js'
+import {ArtifactPointer, ArtifactRole, PlatformResult, ResultDetail, TraceArtifact, Warning} from './platform.js'
 import {cell, formatTime, renderTable} from './table.js'
 
 /** The first line of a possibly multi-line message. */
@@ -20,6 +20,31 @@ export function errorLines(detail: ResultDetail, indent = '  '): string[] {
   if (detail.errorMessage) lines.push(detail.errorMessage)
   for (const finding of detail.errors ?? []) lines.push(`${indent}- ${finding}`)
   return lines
+}
+
+/**
+ * The warnings on a document or a result, one per line: the stable code to
+ * branch on, the prose, and the result that raised it when the caller is not
+ * already looking at that result. Codes are padded so they read as a column.
+ */
+export function warningLines(warnings: (Warning & {resultId?: string})[]): string[] {
+  const width = Math.max(0, ...warnings.map((w) => w.code.length))
+  return warnings.map((w) => {
+    const raised = w.resultId ? `  (result ${w.resultId})` : ''
+    return `${w.code.padEnd(width)}  ${firstLine(w.message)}${raised}`
+  })
+}
+
+/**
+ * The status cell with its warning count beside it. A warning is its own axis
+ * and never changes the status, so a delivered document that raised one still
+ * reads `delivered` and the count sits next to the word rather than displacing
+ * it. Nothing is added when there are no warnings.
+ */
+export function statusCell(status: string | null | undefined, warningCount: number | undefined): string {
+  const count = warningCount ?? 0
+  if (count <= 0) return cell(status)
+  return `${cell(status)} (${count} warning${count === 1 ? '' : 's'})`
 }
 
 /** The artifact table, with the fetch hint, for a list of pointers. */
