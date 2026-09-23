@@ -1,6 +1,6 @@
 import {Args} from '@oclif/core'
 
-import {SERVER_LOOKUP, X12Command} from '../../x12-base-command.js'
+import {SERVER_LOOKUP, X12_LICENSE_NOTICE, X12Command} from '../../x12-base-command.js'
 
 export default class X12Seg extends X12Command<typeof X12Seg> {
   // `segment` keeps working but stays out of the help listing; `seg` is canonical.
@@ -8,7 +8,9 @@ export default class X12Seg extends X12Command<typeof X12Seg> {
 
   static summary = 'Look up an X12 segment definition (e.g. N1).'
 
-  static description = SERVER_LOOKUP
+  static description = `${SERVER_LOOKUP}
+
+${X12_LICENSE_NOTICE}`
 
   static examples = ['<%= config.bin %> x12 seg N1', '<%= config.bin %> x12 seg REF -r 005010']
 

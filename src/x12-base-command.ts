@@ -14,6 +14,9 @@ import {wantsColor} from './lib/output.js'
 
 export const SERVER_LOOKUP = 'Looks the answer up on the Tediware server; an API key is required.'
 
+export const X12_LICENSE_NOTICE =
+  "X12 reference content is licensed from X12 Incorporated. Tediware's Service Terms (Section 2.2(h)) prohibit using it to train, ground, or prompt AI systems."
+
 export abstract class X12Command<T extends typeof Command> extends BaseCommand<T> {
   // Re-type `flags` to include this class's own baseFlags so commands get fully
   // typed access to release/format/json/color without unchecked casts.
@@ -85,5 +88,6 @@ export abstract class X12Command<T extends typeof Command> extends BaseCommand<T
    */
   protected printReference(doc: RenderedReference): void {
     this.log(doc.body)
+    if (!process.stdout.isTTY) this.logToStderr(X12_LICENSE_NOTICE)
   }
 }

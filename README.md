@@ -2,8 +2,8 @@
 
 The official command-line client for the [Tediware](https://tediware.com) platform.
 
-`tedi` is a thin client over the Tediware API: no proprietary logic and no
-licensed data live in the CLI. It includes:
+`tedi` is a thin client over the Tediware API: platform logic and licensed
+data stay on the server, not in the CLI. It includes:
 
 **X12 reference lookup**: access transactions, segments and elements from multiple X12
 releases.
@@ -11,11 +11,11 @@ releases.
 machine and inspecting one against the standard.
 **Tediware data plane access**: read your partners, EDI transactions, results,
 traces, logs and artifacts. Send JSON for delivery as EDI, receive EDI as JSON, and more.
-**An agent connection**: `tedi mcp serve` puts the platform's tools in front of a
-coding agent.
+**An MCP bridge**: `tedi mcp serve` connects a stdio MCP client to the platform's
+MCP server.
 
 It is built to grow into a control-plane companion for the platform. The
-interface is the same whether a person, a CI job, or an agent is driving it:
+interface is the same whether a person or a CI job is driving it:
 non-interactive auth, a three-way exit-code contract, `--json` on your own data,
 and clean output when nothing is watching. [AGENTS.md](./AGENTS.md) collects
 those properties in one place.
@@ -340,8 +340,8 @@ Transaction and result lists read newest first.
 
 Tediware hosts a [Model Context Protocol](https://modelcontextprotocol.io) server
 at `https://tediware.com/mcp`. Its tools cover the same ground as this CLI, under
-the same key, rate limits and service terms: X12 reference lookup, interchange
-inspection, and reading and driving your own EDI traffic.
+the same key, rate limits and service terms: interchange inspection, and
+reading and driving your own EDI traffic.
 
 `tedi mcp serve` bridges that server to stdio for agents that launch MCP servers
 as subprocesses, using the key from `tedi auth login` so it never has to be
@@ -370,9 +370,8 @@ connect to the platform's newer protocol without knowing it. It needs a standard
 directly can skip the CLI and connect to `https://tediware.com/mcp` with an
 `Authorization: Key <api_key>` header.
 
-The X12 reference tools answer with the rendered page as text, the same page a
-person reads, and never as structured data. The data tools return structured
-content, as `--json` does here. Two of the tools (`edi_inspect`,
+The data tools return structured content, as `--json` does here. Two of the
+tools (`edi_inspect`,
 `partner_receive`) send a document to the server; run `tedi edi obfuscate` on it
 first if it carries anything that should stay on your machine.
 
@@ -474,12 +473,15 @@ and creates the GitHub Release whose notes power `tedi update`'s changelog. See
 
 ## Contributing
 
-Contributions are welcome under the [DCO](https://developercertificate.org/);
-sign commits with `git commit -s`. See [CONTRIBUTING.md](./CONTRIBUTING.md).
+`tedi` is proprietary software and does not accept outside contributions. Bug
+reports and feature requests are welcome as issues. See
+[CONTRIBUTING.md](./CONTRIBUTING.md) for development setup.
 
 **One hard rule: never commit licensed X12 data** (including test fixtures and
 recorded responses). A CI tripwire guards against it.
 
 ## License
 
-[Apache-2.0](./LICENSE).
+Proprietary; see [LICENSE](./LICENSE). The packages published to npm before
+September 23, 2026 (0.4.0 and earlier) were released under Apache-2.0, and those
+packages remain under that license.

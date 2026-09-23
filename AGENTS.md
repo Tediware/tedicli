@@ -36,7 +36,7 @@ the server reports as incomplete, and anything unanticipated (one line, no
 stack). A data-plane `404` is exit `1` ("not found") only when the server says
 so in the body; a `404` without the platform's JSON shape is "no such endpoint"
 and exits `2`, so a wrong `api.baseUrl` cannot tell you that an existing record
-is missing. "Not an X12 interchange" is exit `1` on every path.
+is missing. A file that is not an EDI interchange is exit `1` on every path.
 
 Under `--json`, an error is JSON on stdout in one shape:
 `{"error": {"message", "code", "suggestions", "exitCode"}}`, with the server's
@@ -52,7 +52,6 @@ explains its exit code.
 | ------------------------------------------- | --------------------------------- |
 | `edi obfuscate`                             | Local. No key. Nothing sent.      |
 | `edi inspect`                               | Uploads the file (scrubbed first by default). |
-| `x12 *`                                     | Server lookup.                    |
 | `transaction`, `result`, `feed`, `artifact`, `trace`, `partner list`, `partner get` | Server, your organization's data. |
 | `connection`, `envelope`, `webhook`, `flow`, `mapping`, `implementation`, `source` | Server, your organization's configuration, read-only. |
 | `partner send`, `partner receive`, `transaction resend` | Server, and the document is delivered or processed. |
@@ -92,11 +91,9 @@ segments deserve a look before sharing.
   server's response unchanged: lists are `{<collection>: [...], pagination:
   {hasMore, nextCursor}}`. `feed list --follow --json` emits JSONL, one entry
   per line, since the stream never ends.
-- `--json` is not offered on `x12` or `edi inspect`. The X12 standard is
-  licensed and served as presentation only: `--format console` (default) or
-  `--format markdown`. Passing `--json` there prints an explanation and exits
-  `2`. Do not work around it by scraping; the reference tools on the MCP server
-  behave the same way and return the same rendered page.
+- `--json` is not offered on `edi inspect`. Its report is presentation only:
+  `--format console` (default) or `--format markdown`. Passing `--json` there
+  prints an explanation and exits `2`.
   `implementation guide` takes the same posture for your own implementations;
   the structure as data is `implementation schema`.
 - The configuration commands (`connection`, `envelope`, `webhook`, `flow`,

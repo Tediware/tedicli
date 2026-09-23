@@ -171,6 +171,48 @@ describe('commands (authenticated)', () => {
     assert.match(error!.message, /--json is not offered here: licensed X12 reference data/)
   })
 
+  describe('the X12 licensing notice', () => {
+    const NOTICE = /X12 reference content is licensed from X12 Incorporated\. Tediware's Service Terms \(Section 2\.2\(h\)\) prohibit using it to train, ground, or prompt AI systems\./
+
+    async function withStdoutTty<T>(isTTY: boolean, fn: () => Promise<T>): Promise<T> {
+      const real = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')
+      Object.defineProperty(process.stdout, 'isTTY', {value: isTTY, configurable: true})
+      try {
+        return await fn()
+      } finally {
+        if (real) Object.defineProperty(process.stdout, 'isTTY', real)
+        else delete (process.stdout as {isTTY?: boolean}).isTTY
+      }
+    }
+
+    for (const [cmd, id] of [['seg', 'N1'], ['ele', '235'], ['txn', '856']]) {
+      it(`x12 ${cmd} prints it on stderr when stdout is not a terminal`, async () => {
+        const {stdout, stderr, error} = await withStdoutTty(false, () => run(['x12', cmd, id]))
+        assert.equal(error, undefined)
+        assert.match(stderr, NOTICE)
+        assert.doesNotMatch(stdout, NOTICE)
+      })
+
+      it(`x12 ${cmd} leaves it off a terminal`, async () => {
+        const {stderr, error} = await withStdoutTty(true, () => run(['x12', cmd, id]))
+        assert.equal(error, undefined)
+        assert.doesNotMatch(stderr, NOTICE)
+      })
+
+      it(`x12 ${cmd} --help carries it`, async () => {
+        const {stdout} = await run(['x12', cmd, '--help'])
+        assert.match(stdout.replace(/\s+/g, ' '), NOTICE)
+      })
+    }
+
+    it('x12 releases never prints it', async () => {
+      const piped = await withStdoutTty(false, () => run(['x12', 'releases']))
+      assert.doesNotMatch(piped.stderr, NOTICE)
+      const help = await run(['x12', 'releases', '--help'])
+      assert.doesNotMatch(help.stdout.replace(/\s+/g, ' '), NOTICE)
+    })
+  })
+
   it('config set then get round-trips', async () => {
     const set = await run(['config', 'set', 'x12.release', '006020'])
     assert.equal(set.error, undefined)

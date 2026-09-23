@@ -2,7 +2,7 @@ import {Args, Flags} from '@oclif/core'
 
 import {CodeLimit} from '../../lib/api-client.js'
 import {wantsFullCodeList} from '../../lib/output.js'
-import {SERVER_LOOKUP, X12Command} from '../../x12-base-command.js'
+import {SERVER_LOOKUP, X12_LICENSE_NOTICE, X12Command} from '../../x12-base-command.js'
 
 export default class X12Ele extends X12Command<typeof X12Ele> {
   // `element` keeps working but stays out of the help listing; `ele` is canonical.
@@ -12,7 +12,9 @@ export default class X12Ele extends X12Command<typeof X12Ele> {
 
   static description = `${SERVER_LOOKUP}
 
-Long code lists are truncated on a terminal, where the footer tells you how to see the rest; piped output is complete.`
+Long code lists are truncated on a terminal, where the footer tells you how to see the rest; piped output is complete.
+
+${X12_LICENSE_NOTICE}`
 
   static examples = [
     '<%= config.bin %> x12 ele 66',

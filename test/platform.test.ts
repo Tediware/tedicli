@@ -582,7 +582,7 @@ describe('data-plane commands (mock backend)', () => {
 
     const guide = await run(['implementation', 'guide', 'mock-impl-1'])
     assert.equal(guide.error, undefined)
-    assert.match(guide.stdout, /R  BSN - Beginning Segment/)
+    assert.match(guide.stdout, /R  ZZA - Synthetic Opening Segment/)
     const markdown = await run(['implementation', 'guide', 'mock-impl-1', '--format', 'markdown'])
     assert.match(markdown.stdout, /^# Acme 856 \(v1\)/)
     const guideJson = await run(['implementation', 'guide', 'mock-impl-1', '--json'])

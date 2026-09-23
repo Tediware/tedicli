@@ -1079,14 +1079,14 @@ in-flight POST is aborted and nothing further is written for that id. Any other
 notification is dropped with a note on stderr, since a notification must not be
 answered and the server refuses them. Stdout carries MCP messages only.
 
-**The reference-tools-return-text rule.** `x12_segment`, `x12_element` and
-`x12_transaction_set` answer with one Markdown text block, declare no
-`outputSchema`, and return no `structuredContent`; the server strips the field
-rather than trusting the tools. This is the presentation-only rule above,
-mapped onto MCP, and the bridge must never add a structured rendering of that
-text. `x12_releases` is structured (a version index, not dictionary content),
-`edi_inspect` carries its findings counters beside the rendered report, and the
-data-plane tools return `structuredContent` freely, as `--json` does.
+**Presentation-only tools.** The server has no X12 dictionary tools.
+`implementation_guide` answers with one Markdown text block, declares no
+`outputSchema`, and returns no `structuredContent`; the server strips the field
+rather than trusting the tool, and the bridge must never add a structured
+rendering of that text. `x12_releases` is structured (a version index, not
+dictionary content), `edi_inspect` carries its findings counters beside the
+rendered report, and the data-plane tools return `structuredContent` freely, as
+`--json` does.
 
 Sandbox keys are refused on `/mcp` outright (`403`, `sandbox_key_not_supported`).
 

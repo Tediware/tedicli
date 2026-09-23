@@ -1,26 +1,8 @@
 # Contributing to tedi
 
-Thanks for your interest in improving the Tediware CLI.
-
-## Developer Certificate of Origin (DCO)
-
-This project uses the [Developer Certificate of Origin](https://developercertificate.org/)
-instead of a CLA. Every commit must be signed off, certifying that you wrote the
-patch or otherwise have the right to submit it under the project's license.
-
-Add a `Signed-off-by` line to each commit:
-
-```
-git commit -s -m "your message"
-```
-
-which appends:
-
-```
-Signed-off-by: Your Name <your.email@example.com>
-```
-
-CI verifies that every commit in a pull request carries this line.
+`tedi` is proprietary software (see [LICENSE](./LICENSE)) and does not accept
+outside contributions. Bug reports and feature requests are welcome as issues.
+This file is for maintainers.
 
 ## The one hard rule: no licensed X12 data, ever
 

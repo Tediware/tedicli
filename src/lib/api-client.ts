@@ -318,12 +318,12 @@ export class MockApiClient implements ApiClient {
           'Elements',
           'Ref        Element    Name                                Type   Requirement  Length   Repeat',
           MOCK_SECTION_RULE,
-          `${id}-01      98         Entity Identifier Code              ID     Mandatory    2/3`,
-          `${id}-02      93         Name                                AN     Conditional  1/60`,
+          `${id}-01      9001       Synthetic Qualifier                 ID     Mandatory    2/3`,
+          `${id}-02      9002       Synthetic Text                      AN     Conditional  1/60`,
         ],
-        ['Syntax Rules', MOCK_SECTION_RULE, `R0203    At least one of ${id}-02 or ${id}-03 is required`],
+        ['Syntax Rules', MOCK_SECTION_RULE, `Q0102    Synthetic rule spanning ${id}-01 and ${id}-02`],
       ],
-      [`## Segment ${id}`, '', `- **${id}-01** (Mandatory) Entity Identifier Code`, `- **${id}-02** (Conditional) Name`],
+      [`## Segment ${id}`, '', `- **${id}-01** (Mandatory) Synthetic Qualifier`, `- **${id}-02** (Conditional) Synthetic Text`],
     )
   }
 
@@ -359,12 +359,12 @@ export class MockApiClient implements ApiClient {
           'Heading',
           'Pos    Segment   Name                                Requirement  Max Use',
           MOCK_SECTION_RULE,
-          '010    ST        Transaction Set Header              Mandatory    1',
+          '010    ZZA       Synthetic Opening Segment           Mandatory    1',
         ],
-        ['Detail', MOCK_SECTION_RULE, '010    HL        Hierarchical Level                  Mandatory    >1'],
-        ['Summary', MOCK_SECTION_RULE, '010    SE        Transaction Set Trailer             Mandatory    1'],
+        ['Detail', MOCK_SECTION_RULE, '010    ZZB       Synthetic Grouping Segment          Mandatory    >1'],
+        ['Summary', MOCK_SECTION_RULE, '010    ZZC       Synthetic Closing Segment           Mandatory    1'],
       ],
-      [`## Transaction Set ${id}`, '', '- 010 **ST** (Mandatory) Transaction Set Header', '- 010 **SE** (Mandatory) Transaction Set Trailer'],
+      [`## Transaction Set ${id}`, '', '- 010 **ZZA** (Mandatory) Synthetic Opening Segment', '- 010 **ZZC** (Mandatory) Synthetic Closing Segment'],
     )
   }
 
@@ -699,7 +699,7 @@ export class MockApiClient implements ApiClient {
     this.requireToken()
     const row = MOCK_IMPLEMENTATIONS.find((i) => i.id === id)
     if (!row) throw new DataNotFoundError('implementation', id)
-    return {...row, description: 'Acme ship notice.', tags: [], mappings: [], partners: [MOCK_PARTNER_REF]}
+    return {...row, description: 'Acme outbound shipments.', tags: [], mappings: [], partners: [MOCK_PARTNER_REF]}
   }
 
   async implementationSchema(id: string): Promise<unknown> {
@@ -719,8 +719,8 @@ export class MockApiClient implements ApiClient {
     if (!MOCK_IMPLEMENTATIONS.some((i) => i.id === id)) throw new DataNotFoundError('implementation', id)
     // Invented placeholder structure, deliberately not real X12 content.
     return format === 'markdown'
-      ? '# Acme 856 (v1)\n\nTransaction set: SH856 - Ship Notice\nRelease: 004010\n\n## Heading\n\n- 0100 **BSN** (Required) - Beginning Segment\n'
-      : 'Acme 856 (v1)\nTransaction Set: SH856 - Ship Notice\nRelease: 004010\n\nHeading\n\nR  BSN - Beginning Segment\n'
+      ? '# Acme 856 (v1)\n\nTransaction set: SH856 - Synthetic Set\nRelease: 004010\n\n## Heading\n\n- 0100 **ZZA** (Required) - Synthetic Opening Segment\n'
+      : 'Acme 856 (v1)\nTransaction Set: SH856 - Synthetic Set\nRelease: 004010\n\nHeading\n\nR  ZZA - Synthetic Opening Segment\n'
   }
 
   async implementationExport(id: string): Promise<unknown> {
