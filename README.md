@@ -270,7 +270,7 @@ tedi partner send ACME 856 ship.json --wait # ...and wait for the trace to finis
 cat order.json | tedi partner send ACME 850 # the file argument reads stdin when omitted
 tedi partner receive ACME 850.edi           # raw partner EDI into the inbound flow
 
-tedi trace <guid>                    # everything on a trace: transactions, results, feed, artifacts, logs
+tedi trace <guid>                    # everything on a trace: transactions, results and their payloads, feed, artifacts, logs
 
 tedi transaction list --direction outbound --ack unacknowledged
 tedi transaction list --warnings     # only documents whose run raised a warning
@@ -281,6 +281,8 @@ tedi transaction resend <id>         # re-deliver an outbound document
 
 tedi result list --status error
 tedi result get <id>
+tedi result payload <id>             # the data that node produced (EDI raw, JSON pretty-printed)
+tedi result payload <id> --keys-only # only its shape; --json-path transactions.0.AT7 reads one part
 
 tedi feed list                       # delivered documents and errors, last 24 hours
 tedi feed list --since 3d --status error --partner ACME

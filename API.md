@@ -594,6 +594,7 @@ GET  /platform/edi_transactions/:id          one transaction
 POST /platform/edi_transactions/:id/resend   re-deliver, 202
 GET  /platform/results                       result list
 GET  /platform/results/:id                   one result
+GET  /platform/results/:id/payload           one result's payload, ?jsonPath=&keysOnly=
 GET  /platform/logs?trace=...                trace logs, oldest first
 GET  /platform/feed_entries                  the feed, oldest first
 GET  /platform/artifacts/:id                 raw document bytes
@@ -616,8 +617,8 @@ Every list answers `{<collection>, pagination: {hasMore, nextCursor}}`, takes
 `limit` (default 50, capped at 100) and an opaque `cursor`, and pages on a
 `(created_at, id)` keyset. The same cursor codec backs the MCP tools, so a
 cursor one surface hands out works on the other. Sandbox-scoped keys are
-refused (`forbidden`) everywhere except `whoami`, `results/:id`, and
-`artifacts/:id`; partners and traces are org-wide and are not opted in.
+refused (`forbidden`) everywhere except `whoami`, `results/:id`,
+`results/:id/payload` and `artifacts/:id`; partners and traces are org-wide and are not opted in.
 
 `since` on the logs and feed endpoints is an ISO 8601 timestamp. A value with
 no zone is read in the server's zone, which is not the zone the API prints in,
@@ -795,11 +796,49 @@ committed after its timestamp, so lines younger than about five seconds are
 withheld rather than risk a reader seeing "no more logs" and then an older
 line appearing. A trace that has just finished takes a moment to show its tail.
 
+Each result row carries `payload: {format, bytes}`, or `null` when the result
+holds no data: what the node produced and how big it is, without the data
+itself. Every stage keeps its own copy of the document, so inlining them would
+put megabytes into one response on a large 846. The size comes from
+decompressing the stored payload, not parsing it.
+
+A failed result carries `detail.incomingResultId`, the result the failing node
+received. An error result's own payload is only `{format: "error", contents:
+{error}}`, so this pointer is how a caller reaches the document that was
+refused. Only error results record it.
+
 A guid nothing in the organization carries is `404 not_found`, which
 distinguishes a trace that does not exist from one with nothing to show yet.
 
 Backs `tedi trace <guid>`, and `--trace` on `transaction get` and
-`transaction logs`.
+`transaction logs`. The trace's PAYLOAD column prints each pointer, and a
+failed result with an `incomingResultId` gets a `tedi result payload` line.
+
+### Result payloads
+
+```
+GET /platform/results/:id/payload?jsonPath=...&keysOnly=true
+```
+
+The data a node produced, kept on its result, as `{format, contents}`:
+`contents` is an object for JSON and a string for EDI. It is not an artifact:
+an artifact is a stored file a result's `detail.artifacts` points to, served by
+`GET /platform/artifacts/:id`. Only some nodes write artifacts; most keep a
+payload.
+
+`jsonPath` is a dot-path into `contents`, numeric segments indexing arrays;
+the response then carries that value as `contents` and echoes `jsonPath`.
+`keysOnly=true` replaces `contents` with its shape (keys, types, array lengths
+with the first element as a sample) four levels deep. Both are optional.
+
+Scoped as `GET /platform/results/:id`, sandbox keys included. A missing result
+and an unresolved `jsonPath` are both `404 not_found`, and the message says
+which: the first adds that results are kept for 45 days, the second names the
+path. The CLI prints that sentence rather than its own. There is no size cap
+here; the MCP `result_payload` tool refuses over 256 KB and points at this
+endpoint.
+
+Backs `tedi result payload <id>` (`--json-path`, `--keys-only`).
 
 ### Transactions
 

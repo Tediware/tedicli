@@ -372,6 +372,7 @@ describe('data-plane commands (mock backend)', () => {
     for (const args of [
       ['partner', 'get', ' '],
       ['result', 'get', ' '],
+      ['result', 'payload', ' '],
       ['artifact', 'get', ' '],
       ['transaction', 'resend', ' '],
       ['trace', ' '],
@@ -436,6 +437,44 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(stdout, /Logs:[\s\S]*Received document/)
     const short = await run(['trace', 'aaaaaaaa-0000-0000-0000-000000000001', '--no-logs'])
     assert.doesNotMatch(short.stdout, /Logs:/)
+  })
+
+  it('trace shows each payload and points a failed result at what it received', async () => {
+    const {stdout, error} = await run(['trace', 'mock-trace-failing', '--no-logs'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /PAYLOAD/)
+    assert.match(stdout, /mock-result-failed\s+error \d+ B/)
+    assert.match(stdout, /What Validation \+ EDI Write received: tedi result payload mock-result-mapped/)
+  })
+
+  it('result payload prints EDI raw and JSON pretty-printed', async () => {
+    const edi = await run(['result', 'payload', 'mock-result-1'])
+    assert.equal(edi.error, undefined)
+    assert.match(edi.stdout, /^ISA\*00\*/)
+
+    const json = await run(['result', 'payload', 'mock-result-mapped'])
+    assert.equal(json.error, undefined)
+    assert.match(json.stdout, /^\{\n {2}"heading"/)
+  })
+
+  it('result payload narrows with --json-path and --keys-only, and --json returns the envelope', async () => {
+    const path = await run(['result', 'payload', 'mock-result-mapped', '--json-path', 'heading.BEG'])
+    assert.deepEqual(JSON.parse(path.stdout), {transaction_set_purpose_code_01: '00'})
+
+    const shape = await run(['result', 'payload', 'mock-result-mapped', '--keys-only'])
+    assert.deepEqual(JSON.parse(shape.stdout).detail.PO1, {_type: 'array', _length: 1, _sample: {assigned_identification_01: 'string'}})
+
+    const envelope = JSON.parse((await run(['result', 'payload', 'mock-result-mapped', '--json'])).stdout)
+    assert.equal(envelope.format, 'json')
+    assert.ok(envelope.contents.heading)
+  })
+
+  it('result payload exits 1 on an unknown result or a path that does not resolve', async () => {
+    const missing = await run(['result', 'payload', 'nope'])
+    assert.equal(missing.exit, 1)
+    const miss = await run(['result', 'payload', 'mock-result-mapped', '--json-path', 'heading.NOPE'])
+    assert.equal(miss.exit, 1)
+    assert.match(miss.error?.message ?? '', /Path 'heading\.NOPE' not found/)
   })
 
   it('trace --json passes the wire shape through, and an unknown trace exits 1', async () => {

@@ -69,6 +69,8 @@ import {
   PartnerSendReceipt,
   PageQuery,
   PlatformResult,
+  ResultPayload,
+  ResultPayloadQuery,
   ResendReceipt,
   ResultListQuery,
   ResultPage,
@@ -190,6 +192,7 @@ export interface ApiClient {
   transactionResend(id: string): Promise<ResendReceipt>
   resultList(query: ResultListQuery): Promise<ResultPage>
   resultGet(id: string): Promise<PlatformResult>
+  resultPayload(id: string, query: ResultPayloadQuery): Promise<ResultPayload>
   logList(query: LogQuery): Promise<LogPage>
   feedList(query: FeedQuery): Promise<FeedPage>
   artifactGet(id: string): Promise<ArtifactContent>
@@ -486,6 +489,26 @@ export class MockApiClient implements ApiClient {
     return row
   }
 
+  async resultPayload(id: string, query: ResultPayloadQuery): Promise<ResultPayload> {
+    this.requireToken()
+    const payload = MOCK_PAYLOADS[id]
+    if (!payload) throw new DataNotFoundError('result', id)
+    let contents: unknown = payload.contents
+    if (query.jsonPath) {
+      if (query.jsonPath.split('.').includes('')) {
+        throw new TediError(`jsonPath has an empty segment: '${query.jsonPath}'`, {code: 'invalid_parameter'})
+      }
+      for (const key of query.jsonPath.split('.')) {
+        contents = contents !== null && typeof contents === 'object' ? (contents as Record<string, unknown>)[key] : undefined
+      }
+      if (contents === undefined) {
+        throw new TediError(`Path '${query.jsonPath}' not found in the payload of result ${id}.`, {exitCode: EXIT_DEFECT, code: 'not_found'})
+      }
+    }
+    if (query.keysOnly) contents = mockShape(contents)
+    return {format: payload.format, contents, ...(query.jsonPath ? {jsonPath: query.jsonPath} : {})}
+  }
+
   async logList(query: LogQuery): Promise<LogPage> {
     this.requireToken()
     let rows = MOCK_LOGS.filter((l) => l.traceGuid === query.trace)
@@ -560,7 +583,10 @@ export class MockApiClient implements ApiClient {
       traceGuid: guid,
       processing: false,
       ediTransactions: transactions,
-      results,
+      results: results.map((r) => {
+        const payload = MOCK_PAYLOADS[r.id]
+        return {...r, payload: payload ? {format: payload.format, bytes: JSON.stringify(payload).length} : null}
+      }),
       feedEntries: MOCK_FEED.filter((f) => f.traceGuid === guid),
       logs: MOCK_LOGS.filter((l) => l.traceGuid === guid),
       artifacts: results.flatMap((r) => (r.detail.artifacts ?? []).map((a) => ({...a, resultId: r.id, nodeName: r.nodeName}))),
@@ -927,7 +953,31 @@ const MOCK_FAILED_RESULT: PlatformResult = {
     direction: 'outbound',
     errorMessage: "Validation failed against implementation 'Mock 850': 2 errors.",
     errors: ["/heading/BEG must have required property 'purchase_order_number_03'", '/detail/PO1/0 must have required property quantity_02'],
+    incomingResultId: 'mock-result-mapped',
   },
+}
+
+// Keyed by result id. The failed result's payload is its error; the mapped
+// document it refused is the payload of its incomingResultId.
+const MOCK_PAYLOADS: Record<string, ResultPayload> = {
+  'mock-result-1': {format: 'edi', contents: 'ISA*00*(synthetic development payload, not real EDI)~'},
+  'mock-result-2': {format: 'edi', contents: 'ISA*00*(synthetic outbound payload)~'},
+  'mock-result-mapped': {
+    format: 'json',
+    contents: {heading: {BEG: {transaction_set_purpose_code_01: '00'}}, detail: {PO1: [{assigned_identification_01: '1'}]}},
+  },
+  'mock-result-failed': {format: 'error', contents: {error: "Validation failed against implementation 'Mock 850': 2 errors."}},
+}
+
+function mockShape(value: unknown, depth = 0): unknown {
+  if (Array.isArray(value)) {
+    return {_type: 'array', _length: value.length, _sample: depth < 4 && value.length > 0 ? mockShape(value[0], depth + 1) : null}
+  }
+  if (value !== null && typeof value === 'object') {
+    if (depth >= 4) return {_type: 'object', _keys: Object.keys(value).length}
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, mockShape(v, depth + 1)]))
+  }
+  return value === null ? 'nilclass' : typeof value
 }
 
 const MOCK_LOGS: LogPage['logs'] = [
@@ -1085,7 +1135,7 @@ interface ErrorContext {
    * verdict the CLI may assert (exit 1). The second must not tell CI the
    * record does not exist.
    */
-  notFound?: {kind: string; id: string}
+  notFound?: {kind: string; id: string; serverMessage?: boolean}
 }
 
 /**
@@ -1406,6 +1456,9 @@ export class HttpApiClient implements ApiClient {
                 suggestions: [`Run \`tedi mapping versions ${notFound.id}\` to list its versions.`],
               })
             }
+            if (notFound.serverMessage && fault.message) {
+              throw new TediError(fault.message, {exitCode: EXIT_DEFECT, code: fault.code})
+            }
             throw new DataNotFoundError(notFound.kind, notFound.id)
           }
           throw new NoSuchEndpointError(this.base)
@@ -1592,6 +1645,14 @@ export class HttpApiClient implements ApiClient {
     return this.platformJson<PlatformResult>(`/platform/results/${encodeURIComponent(id)}`, {
       notFound: {kind: 'result', id},
     })
+  }
+
+  async resultPayload(id: string, query: ResultPayloadQuery): Promise<ResultPayload> {
+    const url = new URL(`${this.base}/platform/results/${encodeURIComponent(id)}/payload`)
+    applyQuery(url, {jsonPath: query.jsonPath, keysOnly: query.keysOnly ? 'true' : undefined})
+    // The server's sentence says why: results age out after 45 days, and a
+    // jsonPath that does not resolve names the path.
+    return this.platformJson<ResultPayload>(url, {notFound: {kind: 'result', id, serverMessage: true}})
   }
 
   async logList(query: LogQuery): Promise<LogPage> {

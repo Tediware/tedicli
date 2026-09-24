@@ -118,7 +118,33 @@ export interface ResultDetail {
   partner?: {key: string}
   artifacts?: ArtifactPointer[]
   transformations?: string[]
+  /** On a failed result, the result whose payload the failing node received. */
+  incomingResultId?: string
   [key: string]: unknown
+}
+
+/** What a result's payload is and how big, as the trace reports it; null when the result holds none. */
+export interface PayloadPointer {
+  format: string
+  bytes: number
+}
+
+/**
+ * The data a node produced, kept on its result (`GET /platform/results/:id/payload`).
+ * Not an artifact: an artifact is a stored file a result points to.
+ */
+export interface ResultPayload {
+  format: string
+  /** An object for JSON, a string for EDI; the value at jsonPath when one was given. */
+  contents: unknown
+  jsonPath?: string
+}
+
+export interface ResultPayloadQuery {
+  /** Dot-path into `contents`; numeric segments index arrays. */
+  jsonPath?: string
+  /** Replace `contents` with its shape: keys, types, array lengths. */
+  keysOnly?: boolean
 }
 
 export interface PlatformResult {
@@ -130,6 +156,8 @@ export interface PlatformResult {
   createdAt: string
   updatedAt: string
   detail: ResultDetail
+  /** Present on the rows `GET /platform/traces/:guid` returns. */
+  payload?: PayloadPointer | null
 }
 
 export interface ResultListQuery extends PageQuery {

@@ -725,6 +725,30 @@ describe('HttpApiClient', () => {
       })
     })
 
+    it('resultPayload sends jsonPath and keysOnly, and prints the server sentence on a 404', async () => {
+      const {calls} = stubFetch(() => ({body: JSON.stringify({format: 'json', contents: {a: 1}, jsonPath: 'x.0'})}))
+      const payload = await client('sk-test').resultPayload('r1', {jsonPath: 'x.0', keysOnly: true})
+      const url = new URL(calls[0].url)
+      assert.equal(url.pathname, '/platform/results/r1/payload')
+      assert.equal(url.searchParams.get('jsonPath'), 'x.0')
+      assert.equal(url.searchParams.get('keysOnly'), 'true')
+      assert.deepEqual(payload.contents, {a: 1})
+
+      await client('sk-test').resultPayload('r1', {})
+      assert.equal(new URL(calls[1].url).search, '')
+
+      stubFetch(() => ({
+        status: 404,
+        body: JSON.stringify({error: {message: 'No result r9 found. Results are kept for 45 days.', code: 'not_found'}}),
+      }))
+      await assert.rejects(client('sk-test').resultPayload('r9', {}), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.match(err.message, /kept for 45 days/)
+        assert.equal(err.exitCode, EXIT_DEFECT)
+        return true
+      })
+    })
+
     it('partnerList and partnerGet read the partner endpoints', async () => {
       const {calls} = stubFetch((r) =>
         r.url.endsWith('/platform/partners')

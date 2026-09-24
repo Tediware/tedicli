@@ -10,7 +10,9 @@ export default class Trace extends PlatformCommand<typeof Trace> {
 
   static description = `${SERVER_DATA}
 
-The trace GUID is what every receipt hands back, and this is the one command to follow it with. PROCESSING says whether the pipeline is still running; poll until it is no. Logs appear a few seconds after they are written.`
+The trace GUID is what every receipt hands back, and this is the one command to follow it with. PROCESSING says whether the pipeline is still running; poll until it is no. Logs appear a few seconds after they are written.
+
+PAYLOAD is the format and size of the data each node produced, printed by \`result payload <id>\`. Artifacts are the stored files, downloaded by \`artifact get <id>\`. On a failed result, the trace names the incoming result whose payload the failing node refused.`
 
   static examples = [
     '<%= config.bin %> trace 3995341c-...',
@@ -65,21 +67,28 @@ The trace GUID is what every receipt hands back, and this is the one command to 
     else {
       this.log(
         renderTable([
-          ['CREATED', 'NODE', 'STATUS', 'ID', 'ERROR'],
+          ['CREATED', 'NODE', 'STATUS', 'ID', 'PAYLOAD', 'ERROR'],
           ...trace.results.map((r) => [
             formatTime(r.createdAt),
             cell(r.nodeName) + (r.detail.resend ? ' (resend)' : ''),
             r.status ?? (r.detail.errorMessage ? 'error' : 'success'),
             r.id,
+            r.payload ? `${r.payload.format} ${formatBytes(r.payload.bytes)}` : '-',
             firstLine(r.detail.errorMessage) || '-',
           ]),
         ]),
       )
       for (const r of trace.results) {
-        if (r.status !== 'error' || !r.detail.errors?.length) continue
-        this.log('')
-        this.log(`Error at ${cell(r.nodeName)}:`)
-        for (const line of errorLines(r.detail)) this.log(`  ${line}`)
+        if (r.status !== 'error') continue
+        if (r.detail.errors?.length) {
+          this.log('')
+          this.log(`Error at ${cell(r.nodeName)}:`)
+          for (const line of errorLines(r.detail)) this.log(`  ${line}`)
+        }
+        if (r.detail.incomingResultId) {
+          this.log('')
+          this.log(`What ${cell(r.nodeName)} received: tedi result payload ${r.detail.incomingResultId}`)
+        }
       }
     }
 
@@ -111,4 +120,8 @@ The trace GUID is what every receipt hands back, and this is the one command to 
 
     return trace
   }
+}
+
+function formatBytes(n: number): string {
+  return n < 1024 ? `${n} B` : `${Math.ceil(n / 1024)} KB`
 }
