@@ -13,7 +13,7 @@
   "bugs": "https://github.com/Tediware/tedicli/issues",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Tediware/tedicli.git"
+    "url": "git+https://github.com/Tediware/tedicli.git"
   },
   "license": "SEE LICENSE IN LICENSE",
   "author": "Tediware",
@@ -21,7 +21,7 @@
   "exports": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "tedi": "./bin/run.js"
+    "tedi": "bin/run.js"
   },
   "files": [
     "/bin",
