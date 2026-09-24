@@ -18,6 +18,7 @@ A warning count beside STATUS counts the non-fatal notes the node raised; warnin
     '<%= config.bin %> result list',
     '<%= config.bin %> result list --status error',
     '<%= config.bin %> result list --trace 4d0e9f5a-... --json',
+    '<%= config.bin %> result list --status error --limit 100 --json --compact',
   ]
 
   static flags = {
@@ -28,6 +29,7 @@ A warning count beside STATUS counts the non-fatal notes the node raised; warnin
       options: ['success', 'error'] as const,
       description: 'Only results that succeeded, or only ones that recorded an error.',
     })(),
+    compact: PlatformCommand.compactFlag,
   }
 
   async run(): Promise<ResultPage> {
@@ -36,6 +38,7 @@ A warning count beside STATUS counts the non-fatal notes the node raised; warnin
       node: this.flags.node,
       trace: this.flags.trace,
       status: this.flags.status,
+      compact: this.wantsCompact(this.flags.compact),
       limit: this.flags.limit,
       cursor: this.flags.cursor,
     })
@@ -44,6 +47,9 @@ A warning count beside STATUS counts the non-fatal notes the node raised; warnin
       this.log('No results match.')
       return page
     }
+
+    // Compact rows lack the fields the table reads; --json prints the return value.
+    if (this.jsonEnabled()) return page
 
     this.log(
       renderTable([

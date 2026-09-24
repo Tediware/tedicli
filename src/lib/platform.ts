@@ -73,6 +73,8 @@ export interface TransactionSummary {
   acknowledgmentStatus?: 'accepted' | 'rejected' | 'unacknowledged' | null
   partnerKey?: string | null
   duplicateOf?: string | null
+  /** When the document left its delivery step, whatever the status. Absent on a server that predates it. */
+  deliveredAt?: string | null
   resendCount: number
   lastResentAt: string | null
   createdAt: string
@@ -88,6 +90,12 @@ export interface TransactionListQuery extends PageQuery {
   partner?: string
   /** True for only documents that raised warnings, false for only those that did not. */
   warnings?: boolean
+  /**
+   * Ask for the compact rows (API.md): a fixed, smaller set of fields per row.
+   * The rows then carry only those fields, whatever the page type says, so
+   * only `--json` output, which passes rows through untouched, sends it.
+   */
+  compact?: boolean
 }
 
 export interface TransactionPage extends Paged {
@@ -165,6 +173,12 @@ export interface ResultListQuery extends PageQuery {
   node?: string
   trace?: string
   status?: 'success' | 'error'
+  /**
+   * Ask for the compact rows (API.md): a fixed, smaller set of fields per row.
+   * The rows then carry only those fields, whatever the page type says, so
+   * only `--json` output, which passes rows through untouched, sends it.
+   */
+  compact?: boolean
 }
 
 export interface ResultPage extends Paged {
@@ -241,6 +255,12 @@ export interface FeedQuery extends PageQuery {
   partner?: string
   trace?: string
   since?: string
+  /**
+   * Ask for the compact rows (API.md): a fixed, smaller set of fields per row.
+   * The rows then carry only those fields, whatever the page type says, so
+   * only `--json` output, which passes rows through untouched, sends it.
+   */
+  compact?: boolean
 }
 
 export interface FeedPage extends Paged {

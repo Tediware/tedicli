@@ -34,6 +34,7 @@ Without --since or --cursor the last 24 hours are shown. Error rows print the fi
     '<%= config.bin %> feed list',
     '<%= config.bin %> feed list --status error --partner ACME --since 3d',
     '<%= config.bin %> feed list --follow',
+    '<%= config.bin %> feed list --status error --since 7d --json --compact',
   ]
 
   static flags = {
@@ -51,6 +52,7 @@ Without --since or --cursor the last 24 hours are shown. Error rows print the fi
       description: 'Keep polling and print new entries as they arrive (Ctrl+C to stop).',
       exclusive: ['cursor', 'limit'],
     }),
+    compact: PlatformCommand.compactFlag,
   }
 
   async run(): Promise<FeedPage> {
@@ -77,6 +79,7 @@ Without --since or --cursor the last 24 hours are shown. Error rows print the fi
       partner: this.flags.partner,
       trace: this.flags.trace,
       since,
+      compact: this.wantsCompact(this.flags.compact),
       limit: this.flags.limit,
     }
 

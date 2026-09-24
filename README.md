@@ -274,6 +274,7 @@ tedi trace <guid>                    # everything on a trace: transactions, resu
 
 tedi transaction list --direction outbound --ack unacknowledged
 tedi transaction list --warnings     # only documents whose run raised a warning
+tedi transaction list --status error --json --compact   # a smaller row per document, for scanning and counting
 tedi transaction get <id>            # envelope, outcome, acknowledgment, warnings, its own artifacts
 tedi transaction get --trace <guid>  # the same, found by the trace a receipt handed back
 tedi transaction logs <id>           # the trace's processing logs
@@ -322,7 +323,9 @@ with the `tedi trace <guid>` line to follow it with. Direction is always
 `inbound` (received from a partner) or `outbound` (sent to one); `--set` names a
 transaction set; `--since` takes an ISO 8601 timestamp with a zone, a bare date,
 or a relative form such as `2h`. Timestamps print as `YYYY-MM-DD HH:MM:SSZ`.
-`--json` prints the server's response unchanged.
+`--json` prints the server's response unchanged. `--compact` on `transaction
+list`, `result list` and `feed list` asks the server for a smaller, fixed set of
+fields per row under `--json`; the table is already compact and does not change.
 
 Warnings are non-fatal notes a run raised, and they are their own axis: they
 never change a document's status, so one that was delivered still reads

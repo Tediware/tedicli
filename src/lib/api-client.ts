@@ -48,6 +48,7 @@ import {
   ConnectionPage,
   EnvelopeDetail,
   EnvelopePage,
+  FeedEntry,
   FeedPage,
   FeedQuery,
   FlowDetail,
@@ -429,7 +430,8 @@ export class MockApiClient implements ApiClient {
     if (query.trace) rows = rows.filter((t) => t.traceGuid === query.trace)
     if (query.status) rows = rows.filter((t) => t.status === query.status)
     if (query.warnings !== undefined) rows = rows.filter((t) => ((t.warningCount ?? 0) > 0) === query.warnings)
-    return {ediTransactions: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+    rows = rows.slice(0, query.limit ?? 50)
+    return {ediTransactions: query.compact ? rows.map(compactTransaction) : rows, pagination: {hasMore: false, nextCursor: null}}
   }
 
   async transactionGet(id: string): Promise<TransactionDetail> {
@@ -482,7 +484,8 @@ export class MockApiClient implements ApiClient {
     if (query.trace) rows = rows.filter((r) => r.traceGuid === query.trace)
     if (query.status) rows = rows.filter((r) => r.status === query.status)
     if (query.node) rows = rows.filter((r) => r.nodeId === query.node || r.nodeName?.toLowerCase() === query.node?.toLowerCase())
-    return {results: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: null}}
+    rows = rows.slice(0, query.limit ?? 50)
+    return {results: query.compact ? rows.map(compactResult) : rows, pagination: {hasMore: false, nextCursor: null}}
   }
 
   async resultGet(id: string): Promise<PlatformResult> {
@@ -526,7 +529,8 @@ export class MockApiClient implements ApiClient {
     if (query.status) rows = rows.filter((f) => f.status === query.status)
     // An empty page echoes the cursor, matching the server's tail contract.
     if (query.cursor) return {feedEntries: [], pagination: {hasMore: false, nextCursor: query.cursor}}
-    return {feedEntries: rows.slice(0, query.limit ?? 50), pagination: {hasMore: false, nextCursor: 'mock-cursor-1'}}
+    rows = rows.slice(0, query.limit ?? 50)
+    return {feedEntries: query.compact ? rows.map(compactFeedEntry) : rows, pagination: {hasMore: false, nextCursor: 'mock-cursor-1'}}
   }
 
   async artifactGet(id: string): Promise<ArtifactContent> {
@@ -1037,6 +1041,50 @@ const MOCK_FEED: FeedPage['feedEntries'] = [
     },
   },
 ]
+
+/**
+ * The server's compact rows (API.md), so the mock answers `compact` the way
+ * the server does. Typed as the full rows for the same reason the query
+ * comment gives: the CLI only ever passes these through to --json.
+ */
+const compactError = (message: string | undefined) => (message === undefined ? null : message.slice(0, 200))
+
+const compactTransaction = (t: TransactionSummary) =>
+  ({
+    id: t.id,
+    createdAt: t.createdAt,
+    direction: t.direction,
+    partnerKey: t.partnerKey ?? null,
+    transactionSetIdentifier: t.transactionSetIdentifier,
+    status: t.status,
+    acknowledgmentStatus: t.acknowledgmentStatus ?? null,
+    warningCount: t.warningCount,
+    deliveredAt: t.deliveredAt ?? null,
+    traceGuid: t.traceGuid,
+  }) as unknown as TransactionSummary
+
+const compactResult = (r: PlatformResult) =>
+  ({
+    id: r.id,
+    traceGuid: r.traceGuid,
+    createdAt: r.createdAt,
+    nodeName: r.nodeName,
+    status: r.status,
+    partnerKey: r.detail.partner?.key ?? null,
+    errorMessage: compactError(r.detail.errorMessage),
+  }) as unknown as PlatformResult
+
+const compactFeedEntry = (f: FeedEntry) =>
+  ({
+    id: f.id,
+    createdAt: f.createdAt,
+    direction: f.direction,
+    status: f.status,
+    partnerKey: f.partnerKey,
+    traceGuid: f.traceGuid,
+    resultId: f.resultId,
+    errorMessage: compactError(f.detail.errorMessage),
+  }) as unknown as FeedEntry
 
 const MOCK_PARTNERS: PartnerPage['partners'] = [
   {
@@ -1627,6 +1675,7 @@ export class HttpApiClient implements ApiClient {
       status: query.status,
       partner: query.partner,
       warnings: query.warnings,
+      compact: query.compact ? 'true' : undefined,
       limit: query.limit,
       cursor: query.cursor,
     })
@@ -1660,6 +1709,7 @@ export class HttpApiClient implements ApiClient {
       node: query.node,
       trace: query.trace,
       status: query.status,
+      compact: query.compact ? 'true' : undefined,
       limit: query.limit,
       cursor: query.cursor,
     })
@@ -1702,6 +1752,7 @@ export class HttpApiClient implements ApiClient {
       partner: query.partner,
       trace: query.trace,
       since: query.since,
+      compact: query.compact ? 'true' : undefined,
       limit: query.limit,
       cursor: query.cursor,
     })

@@ -18,6 +18,7 @@ STATUS is processing until the document's run records its first result, error wh
     '<%= config.bin %> transaction list --status error',
     '<%= config.bin %> transaction list --warnings',
     '<%= config.bin %> transaction list --partner ACME --set 850 --json',
+    '<%= config.bin %> transaction list --status error --limit 100 --json --compact',
   ]
 
   static flags = {
@@ -40,6 +41,7 @@ STATUS is processing until the document's run records its first result, error wh
       allowNo: true,
       description: 'Only documents that raised warnings; --no-warnings for only the ones that raised none. Omit for both.',
     }),
+    compact: PlatformCommand.compactFlag,
   }
 
   async run(): Promise<TransactionPage> {
@@ -52,6 +54,7 @@ STATUS is processing until the document's run records its first result, error wh
       ackStatus: this.flags.ack,
       status: this.flags.status,
       warnings: this.flags.warnings,
+      compact: this.wantsCompact(this.flags.compact),
       limit: this.flags.limit,
       cursor: this.flags.cursor,
     })
@@ -60,6 +63,9 @@ STATUS is processing until the document's run records its first result, error wh
       this.log('No transactions match.')
       return page
     }
+
+    // Compact rows lack the fields the table reads; --json prints the return value.
+    if (this.jsonEnabled()) return page
 
     this.log(
       renderTable([

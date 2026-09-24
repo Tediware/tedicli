@@ -282,6 +282,32 @@ describe('data-plane commands (mock backend)', () => {
     assert.equal(page.pagination.nextCursor, 'mock-cursor-1')
   })
 
+  it('--compact with --json returns the compact rows on all three lists', async () => {
+    const transactions = JSON.parse((await run(['transaction', 'list', '--json', '--compact'])).stdout)
+    assert.deepEqual(Object.keys(transactions.ediTransactions[0]).sort(), [
+      'acknowledgmentStatus', 'createdAt', 'deliveredAt', 'direction', 'id', 'partnerKey', 'status',
+      'traceGuid', 'transactionSetIdentifier', 'warningCount',
+    ])
+
+    const results = JSON.parse((await run(['result', 'list', '--json', '--compact'])).stdout)
+    assert.deepEqual(Object.keys(results.results[0]).sort(), [
+      'createdAt', 'errorMessage', 'id', 'nodeName', 'partnerKey', 'status', 'traceGuid',
+    ])
+
+    const feed = JSON.parse((await run(['feed', 'list', '--json', '--compact'])).stdout)
+    assert.deepEqual(Object.keys(feed.feedEntries[0]).sort(), [
+      'createdAt', 'direction', 'errorMessage', 'id', 'partnerKey', 'resultId', 'status', 'traceGuid',
+    ])
+    assert.equal(feed.pagination.nextCursor, 'mock-cursor-1')
+  })
+
+  it('--compact leaves the table alone', async () => {
+    const plain = await run(['result', 'list'])
+    const compact = await run(['result', 'list', '--compact'])
+    assert.equal(compact.error, undefined)
+    assert.equal(compact.stdout, plain.stdout)
+  })
+
   it('feed list --follow excludes --limit', async () => {
     const {error} = await run(['feed', 'list', '--follow', '--limit', '5'])
     assert.match(error?.message ?? '', /cannot also be provided|exclusive/i)

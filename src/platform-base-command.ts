@@ -38,6 +38,20 @@ export abstract class PlatformCommand<T extends typeof Command> extends BaseComm
     description: 'Only inbound (received from a partner) or outbound (sent to a partner) documents.',
   })
 
+  /** `--compact`, for the list commands whose rows the server can shorten. */
+  static compactFlag = Flags.boolean({
+    description:
+      'With --json, return each row as the fixed compact set of fields, for scanning and counting. The table is already compact and does not change.',
+  })
+
+  /**
+   * Whether to ask the server for compact rows. Only under --json: the table
+   * reads fields the compact rows leave out.
+   */
+  protected wantsCompact(compact: boolean | undefined): true | undefined {
+    return compact && this.jsonEnabled() ? true : undefined
+  }
+
   /** The `--since` filter, parsed by `parseSince` before it is sent. */
   static sinceFlag = Flags.string({
     description:

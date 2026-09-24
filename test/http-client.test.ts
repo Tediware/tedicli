@@ -702,6 +702,22 @@ describe('HttpApiClient', () => {
       })
     })
 
+    it('the list calls send compact=true only when asked', async () => {
+      const {calls} = stubFetch((req) => {
+        const path = new URL(req.url).pathname
+        const key = path.endsWith('edi_transactions') ? 'ediTransactions' : path.endsWith('results') ? 'results' : 'feedEntries'
+        return {body: JSON.stringify({[key]: [], pagination: {hasMore: false, nextCursor: null}})}
+      })
+      await client('sk-test').transactionList({compact: true})
+      await client('sk-test').resultList({compact: true})
+      await client('sk-test').feedList({compact: true})
+      await client('sk-test').transactionList({})
+      assert.deepEqual(
+        calls.map((c) => new URL(c.url).searchParams.get('compact')),
+        ['true', 'true', 'true', null],
+      )
+    })
+
     it('resultList passes status and node through', async () => {
       const {calls} = stubFetch(() => ({body: JSON.stringify({results: [], pagination: {hasMore: false, nextCursor: null}})}))
       await client('sk-test').resultList({status: 'error', node: 'EDI to JSON'})

@@ -878,11 +878,33 @@ removed while a consumer still reads them.
 `partnerKey` is the partner recorded when the document was processed (the
 partner whose flow received it, or the partner it was submitted to), and
 `partner=<key>` filters on it, so two partners sharing an external envelope
-still get their own rows. Rows that predate the recording resolve the partner
-from the counterparty ISA id (the sender inbound, the receiver outbound)
-against each partner's external envelope; on those, `partnerKey` is absent
-when nothing matches or when two partners share the identifier, rather than
-guessed at.
+still get their own rows. The recorded partner is the only partner: a row that
+predates the recording and could not be backfilled has `partnerKey: null` and
+matches no `partner=` filter. The server never guesses a partner from the
+counterparty ISA id at read time.
+
+`deliveredAt` is when the document left its delivery step (the time of its
+first success feed entry), or `null` when nothing was delivered. It is
+independent of `status`: `error` with a `deliveredAt` means the document
+reached its destination and a later step, such as a notification webhook,
+failed. It can be `null` on rows older than the 45-day result retention.
+
+`compact=true` on `GET /platform/edi_transactions`, `GET /platform/results` and
+`GET /platform/feed_entries` returns each row as a fixed set of fields, for
+scanning and counting; the MCP list tools take the same option as
+`compact: true` and return the same rows. Filters and pagination are unchanged,
+and anything but `true` or `false` is `400 invalid_parameter`. `errorMessage`
+is cut to 200 characters.
+
+```
+edi_transactions  id, createdAt, direction, partnerKey, transactionSetIdentifier,
+                  status, acknowledgmentStatus, warningCount, deliveredAt, traceGuid
+results           id, traceGuid, createdAt, nodeName, status, partnerKey, errorMessage
+feed_entries      id, createdAt, direction, status, partnerKey, traceGuid, resultId, errorMessage
+```
+
+Backs `--compact` on `transaction list`, `result list` and `feed list`, which
+sends it only under `--json`: the table reads fields the compact rows leave out.
 
 `duplicateOf` names an earlier inbound transmission from the same sender with
 the same interchange control number, when there was one. The server records it

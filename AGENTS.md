@@ -92,6 +92,10 @@ segments deserve a look before sharing.
   server's response unchanged: lists are `{<collection>: [...], pagination:
   {hasMore, nextCursor}}`. `feed list --follow --json` emits JSONL, one entry
   per line, since the stream never ends.
+- `--compact` on `transaction list`, `result list` and `feed list` shortens each
+  `--json` row to a fixed set of fields (API.md lists them), so a page of 100
+  fits in a tool result. Use it to scan or count; `get` one row by id for the
+  rest. It does not change the table.
 - `--json` is not offered on `edi inspect`. Its report is presentation only:
   `--format console` (default) or `--format markdown`. Passing `--json` there
   prints an explanation and exits `2`.
