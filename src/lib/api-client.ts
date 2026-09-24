@@ -66,6 +66,8 @@ import {
   PartnerDetail,
   PartnerPage,
   PartnerReceiveReceipt,
+  SuggestionInput,
+  SuggestionReceipt,
   PartnerSendReceipt,
   PageQuery,
   PlatformResult,
@@ -200,6 +202,7 @@ export interface ApiClient {
   partnerGet(key: string): Promise<PartnerDetail>
   partnerSend(key: string, code: string, contents: unknown, filename?: string): Promise<PartnerSendReceipt>
   partnerReceive(key: string, contents: string, filename?: string): Promise<PartnerReceiveReceipt>
+  suggestionSubmit(input: SuggestionInput): Promise<SuggestionReceipt>
   traceGet(guid: string): Promise<TraceDetail>
   connectionList(query: PageQuery): Promise<ConnectionPage>
   connectionGet(id: string): Promise<ConnectionDetail>
@@ -569,6 +572,24 @@ export class MockApiClient implements ApiClient {
   async partnerReceive(): Promise<PartnerReceiveReceipt> {
     this.requireToken()
     return {traceGuid: MOCK_TRACE}
+  }
+
+  async suggestionSubmit(input: SuggestionInput): Promise<SuggestionReceipt> {
+    this.requireToken()
+    // A title of CAPPED meets the daily cap and DUPLICATE an earlier
+    // submission, so every exit path is exercisable against the mock.
+    const title = input.title?.toUpperCase()
+    if (title === 'CAPPED') {
+      throw dailyCapRefusal('This organization has submitted 20 suggestions in the last 24 hours, the most allowed. Do not retry.')
+    }
+    return {
+      id: 'mock-suggestion-1',
+      title: input.title ?? null,
+      category: input.category ?? null,
+      status: 'new',
+      createdAt: '2026-01-01T12:00:00Z',
+      ...(title === 'DUPLICATE' ? {duplicate: true} : {}),
+    }
   }
 
   async traceGet(guid: string): Promise<TraceDetail> {
@@ -1136,6 +1157,8 @@ interface ErrorContext {
    * record does not exist.
    */
   notFound?: {kind: string; id: string; serverMessage?: boolean}
+  /** Builds the error for a 429 the server explained; undefined falls back to the generic rate limit. */
+  limited?: (fault: ServerFault) => TediError | undefined
 }
 
 /**
@@ -1466,8 +1489,11 @@ export class HttpApiClient implements ApiClient {
         if (ctx.missing) throw ctx.missing()
         throw new NoSuchEndpointError(this.base)
       }
-      case 429:
-        throw new RateLimitedError(retryAfterSeconds(res.headers.get('retry-after')))
+      case 429: {
+        const retryAfter = retryAfterSeconds(res.headers.get('retry-after'))
+        const explained = ctx.limited?.(await this.readFault(res))
+        throw explained ?? new RateLimitedError(retryAfter)
+      }
       default:
         break
     }
@@ -1735,6 +1761,20 @@ export class HttpApiClient implements ApiClient {
     })
   }
 
+  /**
+   * `POST /platform/suggestions`. A repeat answers 200 with the earlier
+   * suggestion and `duplicate: true`; the daily cap answers 429 with
+   * `reason: "daily_cap"` and a sentence telling the caller not to retry.
+   */
+  async suggestionSubmit(input: SuggestionInput): Promise<SuggestionReceipt> {
+    return this.platformJson<SuggestionReceipt>('/platform/suggestions', {
+      method: 'POST',
+      body: input,
+      rejected: submissionRefusal,
+      limited: (fault) => (fault.reason === 'daily_cap' ? dailyCapRefusal(fault.message) : undefined),
+    })
+  }
+
   async traceGet(guid: string): Promise<TraceDetail> {
     return this.platformJson<TraceDetail>(`/platform/traces/${encodeURIComponent(guid)}`, {
       notFound: {kind: 'trace', id: guid},
@@ -1888,7 +1928,9 @@ export class HttpApiClient implements ApiClient {
     }
 
     const res = await this.send(url, fetchOpts)
-    if (!res.ok) await this.throwForStatus(res, {missing: opts.missing, notFound: opts.notFound, rejected: opts.rejected})
+    if (!res.ok) {
+      await this.throwForStatus(res, {missing: opts.missing, notFound: opts.notFound, rejected: opts.rejected, limited: opts.limited})
+    }
     return this.readJson<T>(res)
   }
 }
@@ -1915,6 +1957,15 @@ function submissionRefusal(fault: ServerFault): TediError {
   }
   if (fault.code === 'invalid_parameter') return parameterRefusal(fault)
   return new TediError(fault.message || `The submission was refused (HTTP ${fault.status}).`, {code: fault.code})
+}
+
+/**
+ * The organization's daily suggestion allowance is used up. The server's
+ * sentence says not to retry, and no suggestion is added: a retry hint here
+ * would undo the point of the cap.
+ */
+function dailyCapRefusal(message: string): TediError {
+  return new TediError(message || 'The daily suggestion limit is reached. Do not retry.', {code: 'rate_limited'})
 }
 
 // ---------------------------------------------------------------------------

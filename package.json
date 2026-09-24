@@ -111,6 +111,9 @@
       "source": {
         "description": "Your sources: sample JSON of what you send, and the mappings reading each. Read-only."
       },
+      "suggestion": {
+        "description": "Only for a confirmed gap in Tediware: report it to the Tediware team, with evidence."
+      },
       "transaction": {
         "description": "EDI transactions: the documents sent to and received from partners, with their envelopes and outcomes."
       },

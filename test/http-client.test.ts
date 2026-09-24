@@ -831,6 +831,46 @@ describe('HttpApiClient', () => {
       })
     })
 
+    it('suggestionSubmit posts the fields and returns a duplicate as a receipt', async () => {
+      const {calls} = stubFetch(() => ({
+        status: 200,
+        body: JSON.stringify({id: 's-1', title: 'Gap', category: 'api', status: 'new', createdAt: '2026-09-24T00:00:00Z', duplicate: true}),
+      }))
+      const input = {body: 'A gap.', tried: 'Called X.', expected: 'Y.', title: 'Gap', category: 'api' as const, traceGuid: 't-1'}
+      const receipt = await client('sk-test').suggestionSubmit(input)
+      assert.match(calls[0].url, /\/platform\/suggestions$/)
+      assert.equal(calls[0].method, 'POST')
+      assert.deepEqual(JSON.parse(calls[0].body!), input)
+      assert.equal(receipt.duplicate, true)
+    })
+
+    it('suggestionSubmit maps the daily-cap 429 to the server sentence, not the generic rate limit', async () => {
+      stubFetch(() => ({
+        status: 429,
+        body: JSON.stringify({error: {message: 'The limit is reached. Do not retry.', code: 'rate_limited', reason: 'daily_cap'}}),
+      }))
+      await assert.rejects(client('sk-test').suggestionSubmit({body: 'b', tried: 't', expected: 'e'}), (err: unknown) => {
+        assert.ok(err instanceof TediError)
+        assert.ok(!(err instanceof RateLimitedError))
+        assert.equal(err.exitCode, EXIT_UNUSABLE)
+        assert.equal(err.message, 'The limit is reached. Do not retry.')
+        return true
+      })
+    })
+
+    it('suggestionSubmit leaves the per-minute 429 to the generic rate limit', async () => {
+      stubFetch(() => ({
+        status: 429,
+        headers: {'retry-after': '30'},
+        body: JSON.stringify({error: {message: 'Rate limit exceeded. Please try again later.', code: 'rate_limited'}}),
+      }))
+      await assert.rejects(client('sk-test').suggestionSubmit({body: 'b', tried: 't', expected: 'e'}), (err: unknown) => {
+        assert.ok(err instanceof RateLimitedError)
+        assert.equal(err.retryAfterSeconds, 30)
+        return true
+      })
+    })
+
     it('partnerSend posts contents and unwraps the receipt', async () => {
       const {calls} = stubFetch(() => ({
         body: JSON.stringify({

@@ -307,6 +307,74 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(error?.message ?? '', /--json is not offered here: the artifact is raw document bytes/)
   })
 
+  const EVIDENCE = ['--tried', 'Called-partner-get', '--expected', 'ISA-ids']
+
+  it('suggestion submit prints the id and exits 0', async () => {
+    const file = join(dir, 'gap.md')
+    await writeFile(file, 'partner get omits the ISA ids.\n', 'utf8')
+    const {stdout, error, exit} = await run(['suggestion', 'submit', file, ...EVIDENCE])
+    assert.equal(error, undefined)
+    assert.equal(exit, 0)
+    assert.match(stdout, /^Submitted suggestion mock-suggestion-1\.$/m)
+  })
+
+  it('suggestion submit reports a duplicate and exits 0, with duplicate in --json', async () => {
+    const args = ['suggestion', 'submit', ...EVIDENCE, '--title', 'duplicate']
+    const {stdout, exit} = await withStdin('A gap.', () => run(args))
+    assert.equal(exit, 0)
+    assert.match(stdout, /Already submitted as suggestion mock-suggestion-1/)
+    const json = await withStdin('A gap.', () => run([...args, '--json']))
+    assert.equal(json.exit, 0)
+    assert.deepEqual(JSON.parse(json.stdout), {
+      id: 'mock-suggestion-1',
+      title: 'duplicate',
+      category: null,
+      status: 'new',
+      createdAt: '2026-01-01T12:00:00Z',
+      duplicate: true,
+    })
+  })
+
+  it('suggestion submit exits 2 with the no-retry sentence at the daily cap', async () => {
+    const {error, exit} = await withStdin('A gap.', () => run(['suggestion', 'submit', ...EVIDENCE, '--title', 'capped']))
+    assert.equal(exit, 2)
+    assert.match(error?.message ?? '', /Do not retry/)
+  })
+
+  for (const missing of ['--tried', '--expected']) {
+    it(`suggestion submit exits 2 without ${missing}, before reading or sending anything`, async () => {
+      process.env.TEDI_API_MOCK = '0'
+      const realFetch = globalThis.fetch
+      let requests = 0
+      globalThis.fetch = (async () => {
+        requests++
+        throw new Error('no request expected')
+      }) as typeof fetch
+      try {
+        const i = EVIDENCE.indexOf(missing)
+        const evidence = [...EVIDENCE.slice(0, i), ...EVIDENCE.slice(i + 2)]
+        const {error, exit} = await withStdin('A gap.', () => run(['suggestion', 'submit', ...evidence]))
+        assert.equal(exit, 2)
+        assert.match(error?.message ?? '', new RegExp(`${missing} is required`))
+        assert.equal(requests, 0)
+      } finally {
+        globalThis.fetch = realFetch
+      }
+    })
+  }
+
+  it('suggestion submit refuses a category outside the four', async () => {
+    const {error, exit} = await withStdin('A gap.', () => run(['suggestion', 'submit', ...EVIDENCE, '--category', 'bug']))
+    assert.equal(exit, 2)
+    assert.match(error?.message ?? '', /Expected --category=bug to be one of: docs, api, feature, other/)
+  })
+
+  it('suggestion submit refuses an empty body', async () => {
+    const {error, exit} = await withStdin('  \n', () => run(['suggestion', 'submit', ...EVIDENCE]))
+    assert.equal(exit, 2)
+    assert.match(error?.message ?? '', /The suggestion is empty/)
+  })
+
   it('partner send parses JSON input and prints the receipt with one real follow-up line', async () => {
     const file = join(dir, 'order.json')
     await writeFile(file, JSON.stringify({po: '123'}), 'utf8')

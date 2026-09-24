@@ -598,6 +598,7 @@ GET  /platform/results/:id/payload           one result's payload, ?jsonPath=&ke
 GET  /platform/logs?trace=...                trace logs, oldest first
 GET  /platform/feed_entries                  the feed, oldest first
 GET  /platform/artifacts/:id                 raw document bytes
+POST /platform/suggestions                   report a confirmed gap, 201 (200 for a repeat)
 POST /platform/partners/:key/ts/:code        outbound submission
 POST /platform/partners/:key/edi             inbound raw-EDI submission
 GET  /platform/connections [/:id]            connections
@@ -1020,6 +1021,32 @@ check, passed every node, and failed quietly in a mapping.
 The submitted bytes are stored as an `input` artifact on the entry node's
 result, as an SFTP fetch already did, so a document pushed in over HTTP can be
 re-inspected or replayed.
+
+### Suggestions
+
+`POST /platform/suggestions` takes
+`{body, tried?, expected?, title?, category?, reference?, traceGuid?}`, where
+`category` is one of `docs`, `api`, `feature` or `other`. It is for a confirmed
+gap in Tediware, and emails the team. `tried` and `expected` are optional on the
+server for now and will become required; `tedi suggestion submit` requires both
+already and refuses before any request when either is missing.
+
+```
+201  created                        {id, title, category, status, createdAt}
+200  repeat of the same title or    the earlier suggestion, plus "duplicate": true
+     body from this key in 24h
+429  daily_cap                      {error: {message, code: "rate_limited", reason: "daily_cap"}}
+429  per-minute throttle            the generic rate-limit body, no reason
+400  missing_parameter              blank body
+422  invalid_parameter              a field failed validation
+```
+
+A duplicate is a success: nothing new is sent, and the CLI exits `0` so an agent
+does not read it as a failure and retry. The daily cap is per organization,
+across keys, and its message says not to retry; the CLI prints that sentence and
+exits `2` with no retry hint. The per-minute throttle keeps the usual
+rate-limit handling. The same submission is the `suggestion_submit` MCP tool,
+which shares both limits.
 
 ## MCP (`/mcp`)
 

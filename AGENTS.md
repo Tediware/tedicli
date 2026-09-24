@@ -55,6 +55,7 @@ explains its exit code.
 | `transaction`, `result`, `feed`, `artifact`, `trace`, `partner list`, `partner get` | Server, your organization's data. |
 | `connection`, `envelope`, `webhook`, `flow`, `mapping`, `implementation`, `source` | Server, your organization's configuration, read-only. |
 | `partner send`, `partner receive`, `transaction resend` | Server, and the document is delivered or processed. |
+| `suggestion submit`                         | Server. Emails the Tediware team; only for a confirmed gap in Tediware. |
 | `mcp serve`                                 | Forwards to the server. No tool logic locally. |
 | `whoami`, `auth login`, `auth status`       | Server. `auth status` reads only the key's label and degrades without it. |
 | `config`, `auth logout`                     | Local. Nothing is sent.           |

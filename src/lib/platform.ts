@@ -263,6 +263,31 @@ export interface PartnerSendReceipt {
   ediTransactionId: string
 }
 
+/** The categories a suggestion may carry; the server refuses anything else. */
+export const SUGGESTION_CATEGORIES = ['docs', 'api', 'feature', 'other'] as const
+export type SuggestionCategory = (typeof SUGGESTION_CATEGORIES)[number]
+
+/** What `suggestion submit` sends. Absent optional fields are left out of the request. */
+export interface SuggestionInput {
+  body: string
+  tried: string
+  expected: string
+  title?: string
+  category?: SuggestionCategory
+  reference?: string
+  traceGuid?: string
+}
+
+/** A submitted suggestion. `duplicate` is set when the server returned an earlier one instead. */
+export interface SuggestionReceipt {
+  id: string
+  title: string | null
+  category: string | null
+  status: string
+  createdAt: string
+  duplicate?: boolean
+}
+
 /** Receipt for a raw-EDI inbound submission (`partner receive`). */
 export interface PartnerReceiveReceipt {
   message?: string

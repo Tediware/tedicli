@@ -289,6 +289,8 @@ tedi feed list --since 3d --status error --partner ACME
 tedi feed list --follow              # tail it live (JSONL with --json)
 
 tedi artifact get <id> -o file.edi   # download stored document bytes
+
+tedi suggestion submit gap.md --tried "..." --expected "..."   # report a confirmed gap in Tediware to the team
 ```
 
 The rest of your configuration reads the same way, by id. Every `list` has
