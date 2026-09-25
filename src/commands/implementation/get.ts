@@ -5,7 +5,7 @@ import {ImplementationDetail} from '../../lib/platform.js'
 import {cell} from '../../lib/table.js'
 
 export default class ImplementationGet extends PlatformCommand<typeof ImplementationGet> {
-  static summary = 'Show one implementation: transaction set, status, description, and the mappings and partners using it.'
+  static summary = 'Show one implementation: transaction set, version, description, and the mappings and partners using it.'
 
   static description = `${SERVER_DATA}
 
@@ -24,7 +24,6 @@ The structure itself is not shown here. \`implementation schema\` gives the JSON
     this.log(`${i.name}  (${i.transactionSet.identifier} in ${i.transactionSet.release})`)
     this.log(`Id             ${i.id}`)
     this.log(`Version        ${cell(i.version)}`)
-    this.log(`Status         ${cell(i.status)}`)
     if (i.description) this.log(`Description    ${i.description}`)
     if (i.tags.length > 0) this.log(`Tags           ${i.tags.join(', ')}`)
     this.log(`Structure      ${i.segmentUseCount} segments, ${i.loopUseCount} loops`)

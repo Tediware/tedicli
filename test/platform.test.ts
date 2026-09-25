@@ -695,14 +695,15 @@ describe('data-plane commands (mock backend)', () => {
   it('implementation list, get, schema, guide and export', async () => {
     const list = await run(['implementation', 'list'])
     assert.equal(list.error, undefined)
-    assert.match(list.stdout, /mock-impl-1\s+Acme 856\s+856\s+004010\s+1\s+active\s+12\s+3\s+-/)
-    assert.match(list.stdout, /mock-impl-2\s+Acme 850\s+850\s+004010\s+1\s+draft\s+20\s+4\s+Public 850/)
+    assert.match(list.stdout, /mock-impl-1\s+Acme 856\s+856\s+004010\s+1\s+12\s+3\s+-/)
+    assert.match(list.stdout, /mock-impl-2\s+Acme 850\s+850\s+004010\s+1\s+20\s+4\s+Public 850/)
     const one = await run(['implementation', 'list', '--set', '850'])
     assert.doesNotMatch(one.stdout, /mock-impl-1/)
 
     const get = await run(['implementation', 'get', 'mock-impl-1'])
     assert.equal(get.error, undefined)
     assert.match(get.stdout, /Acme 856  \(856 in 004010\)/)
+    assert.doesNotMatch(get.stdout, /Status/)
     assert.match(get.stdout, /Structure\s+12 segments, 3 loops/)
     assert.match(get.stdout, /Partners using it directly:\n\s+ACME\s+Acme Retail/)
 

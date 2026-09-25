@@ -5,7 +5,7 @@ import {ImplementationPage} from '../../lib/platform.js'
 import {cell, renderTable} from '../../lib/table.js'
 
 export default class ImplementationList extends PlatformCommand<typeof ImplementationList> {
-  static summary = 'List your own implementations: transaction set, release, status, and where each was copied from.'
+  static summary = 'List your own implementations: transaction set, release, version, and where each was copied from.'
 
   static description = `${SERVER_DATA}
 
@@ -37,14 +37,13 @@ Public implementations are not listed. Import one in the app first; it is then y
 
     this.log(
       renderTable([
-        ['ID', 'NAME', 'SET', 'RELEASE', 'VERSION', 'STATUS', 'SEGMENTS', 'LOOPS', 'COPIED FROM'],
+        ['ID', 'NAME', 'SET', 'RELEASE', 'VERSION', 'SEGMENTS', 'LOOPS', 'COPIED FROM'],
         ...page.implementations.map((i) => [
           i.id,
           i.name,
           i.transactionSet.identifier,
           i.transactionSet.release,
           cell(i.version),
-          cell(i.status),
           String(i.segmentUseCount),
           String(i.loopUseCount),
           i.sourceImplementation?.name ?? '-',

@@ -630,7 +630,6 @@ export interface ImplementationSummary {
   id: string
   name: string
   version: string | null
-  status: string | null
   transactionSet: {identifier: string; release: string}
   sourceImplementation: NamedRef | null
   segmentUseCount: number

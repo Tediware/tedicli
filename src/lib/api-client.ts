@@ -868,8 +868,8 @@ const MOCK_MAPPING_VERSIONS: MappingVersion[] = [
 ]
 
 const MOCK_IMPLEMENTATIONS: ImplementationPage['implementations'] = [
-  {id: 'mock-impl-1', name: 'Acme 856', version: '1', status: 'active', transactionSet: {identifier: '856', release: '004010'}, sourceImplementation: null, segmentUseCount: 12, loopUseCount: 3},
-  {id: 'mock-impl-2', name: 'Acme 850', version: '1', status: 'draft', transactionSet: {identifier: '850', release: '004010'}, sourceImplementation: {id: 'mock-public-1', name: 'Public 850'}, segmentUseCount: 20, loopUseCount: 4},
+  {id: 'mock-impl-1', name: 'Acme 856', version: '1', transactionSet: {identifier: '856', release: '004010'}, sourceImplementation: null, segmentUseCount: 12, loopUseCount: 3},
+  {id: 'mock-impl-2', name: 'Acme 850', version: '1', transactionSet: {identifier: '850', release: '004010'}, sourceImplementation: {id: 'mock-public-1', name: 'Public 850'}, segmentUseCount: 20, loopUseCount: 4},
 ]
 const MOCK_FAILING_TRACE = 'mock-trace-failing'
 const MOCK_HANGING_TRACE = 'mock-trace-hanging'
