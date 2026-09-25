@@ -662,13 +662,14 @@ describe('HttpApiClient', () => {
           pagination: {hasMore: true, nextCursor: 'abc'},
         }),
       }))
-      const page = await client('sk-test').transactionList({direction: 'outbound', transactionSetIdentifier: '850', partner: 'acme', limit: 5})
+      const page = await client('sk-test').transactionList({direction: 'outbound', transactionSetIdentifier: '850', partner: 'acme', reference: '32185544', limit: 5})
       const url = new URL(calls[0].url)
       assert.equal(url.pathname, '/platform/edi_transactions')
       assert.equal(url.searchParams.get('direction'), 'outbound')
       assert.equal(url.searchParams.get('incoming'), null)
       assert.equal(url.searchParams.get('transaction_set_identifier'), '850')
       assert.equal(url.searchParams.get('partner'), 'acme')
+      assert.equal(url.searchParams.get('reference'), '32185544')
       assert.equal(url.searchParams.get('limit'), '5')
       assert.deepEqual(page, {ediTransactions: [{id: 't1'}], pagination: {hasMore: true, nextCursor: 'abc'}})
     })
