@@ -62,6 +62,8 @@ export interface TransactionSummary {
   groupControlNumber: string | null
   transactionSetControlNumber: string | null
   transactionSetIdentifier: string | null
+  /** The PO, invoice or shipment number, on the sets that carry one. Absent on a server that predates it. */
+  reference?: string | null
   traceGuid: string | null
   /** Shipped and kept; `direction` is the spelling to read. */
   incoming: boolean
@@ -88,6 +90,8 @@ export interface TransactionListQuery extends PageQuery {
   ackStatus?: string
   status?: string
   partner?: string
+  /** Business reference prefix: matches references that begin with it. */
+  reference?: string
   /** True for only documents that raised warnings, false for only those that did not. */
   warnings?: boolean
   /**

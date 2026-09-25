@@ -844,8 +844,14 @@ Backs `tedi result payload <id>` (`--json-path`, `--keys-only`).
 ### Transactions
 
 `GET /platform/edi_transactions` filters on `incoming`, `direction`,
-`transaction_set_identifier`, `trace`, `ack_status`, `status`, `partner` and
-`warnings`, newest first.
+`transaction_set_identifier`, `trace`, `ack_status`, `status`, `partner`,
+`reference` and `warnings`, newest first.
+
+`reference` is the business reference (the PO number on an 850, the invoice
+number on an 810, the shipment id on an 856) and is on every row, `null` on
+sets that carry none. The filter matches references that begin with the value,
+case-sensitively; a value that is only whitespace is `400`. Backs
+`--reference` on `transaction list`, and the REFERENCE column.
 
 `status=delivered|error|processing` is the processing status the show already
 carried, now stored on the row so the list can filter on it in SQL, and emitted
@@ -898,7 +904,8 @@ is cut to 200 characters.
 
 ```
 edi_transactions  id, createdAt, direction, partnerKey, transactionSetIdentifier,
-                  status, acknowledgmentStatus, warningCount, deliveredAt, traceGuid
+                  reference, status, acknowledgmentStatus, warningCount, deliveredAt,
+                  traceGuid
 results           id, traceGuid, createdAt, nodeName, status, partnerKey, errorMessage
 feed_entries      id, createdAt, direction, status, partnerKey, traceGuid, resultId, errorMessage
 ```

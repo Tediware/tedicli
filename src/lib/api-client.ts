@@ -428,6 +428,7 @@ export class MockApiClient implements ApiClient {
     }
     if (query.partner) rows = rows.filter((t) => t.partnerKey?.toLowerCase() === query.partner?.toLowerCase())
     if (query.trace) rows = rows.filter((t) => t.traceGuid === query.trace)
+    if (query.reference) rows = rows.filter((t) => t.reference?.startsWith(query.reference ?? '') ?? false)
     if (query.status) rows = rows.filter((t) => t.status === query.status)
     if (query.warnings !== undefined) rows = rows.filter((t) => ((t.warningCount ?? 0) > 0) === query.warnings)
     rows = rows.slice(0, query.limit ?? 50)
@@ -885,6 +886,7 @@ const MOCK_TRANSACTIONS: TransactionSummary[] = [
     groupControlNumber: '000000001',
     transactionSetControlNumber: '0001',
     transactionSetIdentifier: '850',
+    reference: '32185544',
     traceGuid: MOCK_TRACE,
     incoming: true,
     direction: 'inbound',
@@ -1056,6 +1058,7 @@ const compactTransaction = (t: TransactionSummary) =>
     direction: t.direction,
     partnerKey: t.partnerKey ?? null,
     transactionSetIdentifier: t.transactionSetIdentifier,
+    reference: t.reference ?? null,
     status: t.status,
     acknowledgmentStatus: t.acknowledgmentStatus ?? null,
     warningCount: t.warningCount,
@@ -1674,6 +1677,7 @@ export class HttpApiClient implements ApiClient {
       ack_status: query.ackStatus,
       status: query.status,
       partner: query.partner,
+      reference: query.reference,
       warnings: query.warnings,
       compact: query.compact ? 'true' : undefined,
       limit: query.limit,

@@ -18,6 +18,7 @@ STATUS is processing until the document's run records its first result, error wh
     '<%= config.bin %> transaction list --status error',
     '<%= config.bin %> transaction list --warnings',
     '<%= config.bin %> transaction list --partner ACME --set 850 --json',
+    '<%= config.bin %> transaction list --reference 32185544',
     '<%= config.bin %> transaction list --status error --limit 100 --json --compact',
   ]
 
@@ -27,6 +28,10 @@ STATUS is processing until the document's run records its first result, error wh
     set: Flags.string({description: 'Filter by transaction set (e.g. 850).'}),
     ts: Flags.string({hidden: true}),
     partner: Flags.string({description: 'Filter by partner key.'}),
+    reference: Flags.string({
+      description:
+        'Filter by business reference (the PO number on an 850, the invoice number on an 810, the shipment id on an 856). Matches references that begin with the value, case-sensitively.',
+    }),
     trace: Flags.string({description: 'Filter by trace GUID.'}),
     status: Flags.string({
       description: 'Filter by processing status.',
@@ -50,6 +55,7 @@ STATUS is processing until the document's run records its first result, error wh
       direction: this.flags.direction,
       transactionSetIdentifier: this.flags.set ?? this.flags.ts,
       partner: this.flags.partner,
+      reference: this.flags.reference,
       trace: this.flags.trace,
       ackStatus: this.flags.ack,
       status: this.flags.status,
@@ -69,11 +75,12 @@ STATUS is processing until the document's run records its first result, error wh
 
     this.log(
       renderTable([
-        ['ID', 'DIRECTION', 'SET', 'PARTNER', 'ICN', 'STATUS', 'ACK', 'CREATED'],
+        ['ID', 'DIRECTION', 'SET', 'REFERENCE', 'PARTNER', 'ICN', 'STATUS', 'ACK', 'CREATED'],
         ...page.ediTransactions.map((t) => [
           t.id,
           t.direction ?? (t.incoming ? 'inbound' : 'outbound'),
           cell(t.transactionSetIdentifier),
+          cell(t.reference),
           cell(t.partnerKey),
           cell(t.interchangeControlNumber),
           statusCell(t.status, t.warningCount),

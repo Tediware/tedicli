@@ -274,6 +274,7 @@ tedi trace <guid>                    # everything on a trace: transactions, resu
 
 tedi transaction list --direction outbound --ack unacknowledged
 tedi transaction list --warnings     # only documents whose run raised a warning
+tedi transaction list --reference 32185544   # the documents whose PO, invoice or shipment number starts with it
 tedi transaction list --status error --json --compact   # a smaller row per document, for scanning and counting
 tedi transaction get <id>            # envelope, outcome, acknowledgment, warnings, its own artifacts
 tedi transaction get --trace <guid>  # the same, found by the trace a receipt handed back

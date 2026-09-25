@@ -52,8 +52,8 @@ describe('data-plane commands (mock backend)', () => {
   it('transaction list renders a table with inbound|outbound, the partner, and second-precision UTC times', async () => {
     const {stdout, error} = await run(['transaction', 'list'])
     assert.equal(error, undefined)
-    assert.match(stdout, /ID\s+DIRECTION\s+SET\s+PARTNER\s+ICN\s+STATUS\s+ACK\s+CREATED/)
-    assert.match(stdout, /mock-txn-1\s+inbound\s+850\s+ACME\s+000000001\s+delivered\s+n\/a\s+2026-01-01 12:00:00Z/)
+    assert.match(stdout, /ID\s+DIRECTION\s+SET\s+REFERENCE\s+PARTNER\s+ICN\s+STATUS\s+ACK\s+CREATED/)
+    assert.match(stdout, /mock-txn-1\s+inbound\s+850\s+32185544\s+ACME\s+000000001\s+delivered\s+n\/a\s+2026-01-01 12:00:00Z/)
   })
 
   it('transaction list --json is the REST envelope', async () => {
@@ -82,6 +82,13 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(error?.message ?? '', /Expected --status=errored to be one of: delivered, error/)
   })
 
+  it('transaction list --reference matches the start of a reference', async () => {
+    const {stdout, error} = await run(['transaction', 'list', '--reference', '3218'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /mock-txn-1/)
+    assert.doesNotMatch(stdout, /mock-txn-2/)
+  })
+
   it('transaction list --set filters, with --ts as a hidden alias', async () => {
     const set = await run(['transaction', 'list', '--set', '856'])
     assert.doesNotMatch(set.stdout, /mock-txn-1/)
@@ -95,8 +102,8 @@ describe('data-plane commands (mock backend)', () => {
     const {stdout, error} = await run(['transaction', 'list'])
     assert.equal(error, undefined)
     // The warning is its own axis: the document still reads delivered.
-    assert.match(stdout, /mock-txn-2\s+outbound\s+856\s+ACME\s+000000002\s+delivered \(1 warning\)\s+accepted/)
-    assert.match(stdout, /mock-txn-1\s+inbound\s+850\s+ACME\s+000000001\s+delivered\s+n\/a/)
+    assert.match(stdout, /mock-txn-2\s+outbound\s+856\s+-\s+ACME\s+000000002\s+delivered \(1 warning\)\s+accepted/)
+    assert.match(stdout, /mock-txn-1\s+inbound\s+850\s+32185544\s+ACME\s+000000001\s+delivered\s+n\/a/)
     assert.doesNotMatch(stdout, /^\s*ID.*\bWARN/m)
   })
 
@@ -285,7 +292,7 @@ describe('data-plane commands (mock backend)', () => {
   it('--compact with --json returns the compact rows on all three lists', async () => {
     const transactions = JSON.parse((await run(['transaction', 'list', '--json', '--compact'])).stdout)
     assert.deepEqual(Object.keys(transactions.ediTransactions[0]).sort(), [
-      'acknowledgmentStatus', 'createdAt', 'deliveredAt', 'direction', 'id', 'partnerKey', 'status',
+      'acknowledgmentStatus', 'createdAt', 'deliveredAt', 'direction', 'id', 'partnerKey', 'reference', 'status',
       'traceGuid', 'transactionSetIdentifier', 'warningCount',
     ])
 
