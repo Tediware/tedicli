@@ -592,6 +592,7 @@ GET  /platform/traces/:guid                  one trace, assembled
 GET  /platform/edi_transactions              transaction list
 GET  /platform/edi_transactions/:id          one transaction
 POST /platform/edi_transactions/:id/resend   re-deliver, 202
+POST /platform/edi_transactions/:id/redeliver  inbound redelivery, 202
 GET  /platform/results                       result list
 GET  /platform/results/:id                   one result
 GET  /platform/results/:id/payload           one result's payload, ?jsonPath=&keysOnly=
@@ -966,6 +967,17 @@ more than omitting the role.
 resend lands on the original trace, and without it the receipt named nothing
 the caller could follow. The replay's results carry `detail.resend: true`, so a
 trace or an error feed entry can tell a replay from the original.
+
+`POST /platform/edi_transactions/:id/redeliver` is the inbound counterpart,
+with the same receipt. It repeats the inbound delivery (the customer's webhook,
+or an upload) from the stored result, on the same trace, and its results carry
+`detail.resend: true` too. Resend stays outbound-only: an inbound transaction
+there is still refused with `not_outbound`, and an outbound one on redeliver is
+refused with `not_inbound`. Its other refusals are `content_unavailable`,
+`delivery_node_missing`, `delivery_target_missing`, `delivery_not_reached` (the
+document failed upstream and never reached delivery), and `poll_delivery` (the
+partner is poll-only, so there is no delivery to repeat). It shares resend's
+ceiling.
 
 ### Results
 

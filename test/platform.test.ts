@@ -216,6 +216,13 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(stdout, /Follow it with: tedi trace mock-trace-outbound/)
   })
 
+  it('transaction redeliver prints the trace and the follow-up line', async () => {
+    const {stdout, error} = await run(['transaction', 'redeliver', 'mock-txn-1'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Redelivery queued for mock-txn-1/)
+    assert.match(stdout, /Follow it with: tedi trace /)
+  })
+
   it('result get shows status, partner, the steps and artifacts', async () => {
     const {stdout, error} = await run(['result', 'get', 'mock-result-1'])
     assert.equal(error, undefined)
@@ -476,6 +483,7 @@ describe('data-plane commands (mock backend)', () => {
       ['result', 'payload', ' '],
       ['artifact', 'get', ' '],
       ['transaction', 'resend', ' '],
+      ['transaction', 'redeliver', ' '],
       ['trace', ' '],
     ]) {
       // The test runner trims a blank argument away, so oclif reports it as

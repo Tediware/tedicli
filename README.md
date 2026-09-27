@@ -280,6 +280,7 @@ tedi transaction get <id>            # envelope, outcome, acknowledgment, warnin
 tedi transaction get --trace <guid>  # the same, found by the trace a receipt handed back
 tedi transaction logs <id>           # the trace's processing logs
 tedi transaction resend <id>         # re-deliver an outbound document
+tedi transaction redeliver <id>      # deliver an inbound document to your webhook again
 
 tedi result list --status error
 tedi result get <id>
@@ -319,7 +320,8 @@ tedi implementation export <id> -o acme-850.json   # one portable JSON document,
 tedi source list              # the shapes you send, and the mappings reading each
 ```
 
-Every receipt (`partner send`, `partner receive`, `transaction resend`) ends
+Every receipt (`partner send`, `partner receive`, `transaction resend`,
+`transaction redeliver`) ends
 with the `tedi trace <guid>` line to follow it with. Direction is always
 `inbound` (received from a partner) or `outbound` (sent to one); `--set` names a
 transaction set; `--since` takes an ISO 8601 timestamp with a zone, a bare date,

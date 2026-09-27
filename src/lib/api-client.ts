@@ -193,6 +193,7 @@ export interface ApiClient {
   transactionList(query: TransactionListQuery): Promise<TransactionPage>
   transactionGet(id: string): Promise<TransactionDetail>
   transactionResend(id: string): Promise<ResendReceipt>
+  transactionRedeliver(id: string): Promise<ResendReceipt>
   resultList(query: ResultListQuery): Promise<ResultPage>
   resultGet(id: string): Promise<PlatformResult>
   resultPayload(id: string, query: ResultPayloadQuery): Promise<ResultPayload>
@@ -473,6 +474,13 @@ export class MockApiClient implements ApiClient {
   }
 
   async transactionResend(id: string): Promise<ResendReceipt> {
+    this.requireToken()
+    const row = MOCK_TRANSACTIONS.find((t) => t.id === id)
+    if (!row) throw new DataNotFoundError('transaction', id)
+    return {ediTransactionId: id, traceGuid: row.traceGuid}
+  }
+
+  async transactionRedeliver(id: string): Promise<ResendReceipt> {
     this.requireToken()
     const row = MOCK_TRANSACTIONS.find((t) => t.id === id)
     if (!row) throw new DataNotFoundError('transaction', id)
@@ -1702,6 +1710,18 @@ export class HttpApiClient implements ApiClient {
         // A refused resend (inbound document, purged content, ...) arrives as a
         // nested {code, reason}; the server's message says which, so print it.
         rejected: (fault) => new TediError(fault.message || 'The resend was refused.', {code: fault.code}),
+      },
+    )
+    return {...raw, ediTransactionId: raw.ediTransactionId ?? id}
+  }
+
+  async transactionRedeliver(id: string): Promise<ResendReceipt> {
+    const raw = await this.platformJson<Partial<ResendReceipt>>(
+      `/platform/edi_transactions/${encodeURIComponent(id)}/redeliver`,
+      {
+        notFound: {kind: 'transaction', id},
+        method: 'POST',
+        rejected: (fault) => new TediError(fault.message || 'The redelivery was refused.', {code: fault.code}),
       },
     )
     return {...raw, ediTransactionId: raw.ediTransactionId ?? id}
