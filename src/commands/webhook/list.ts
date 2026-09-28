@@ -24,8 +24,18 @@ Signing secrets are never returned.`
       return page
     }
 
-    this.log(renderTable([['ID', 'NAME', 'KIND', 'URL'], ...page.webhooks.map((w) => [w.id, w.name, w.kind, w.url])]))
+    this.log(
+      renderTable([
+        ['ID', 'NAME', 'KIND', 'URL', 'SIGNED'],
+        ...page.webhooks.map((w) => [w.id, w.name, w.kind, w.url, signed(w.signingSecretSet)]),
+      ]),
+    )
     this.logPageHint(page.pagination)
     return page
   }
+}
+
+function signed(value: boolean | undefined): string {
+  if (value === undefined) return '-'
+  return value ? 'yes' : 'no'
 }

@@ -639,11 +639,13 @@ describe('data-plane commands (mock backend)', () => {
   it('webhook list and get show the URL and the role per partner, never a secret', async () => {
     const list = await run(['webhook', 'list'])
     assert.equal(list.error, undefined)
-    assert.match(list.stdout, /mock-webhook-1\s+Orders\s+standard\s+https:\/\/example\.invalid\/hooks\/orders/)
+    assert.match(list.stdout, /ID\s+NAME\s+KIND\s+URL\s+SIGNED/)
+    assert.match(list.stdout, /mock-webhook-1\s+Orders\s+standard\s+https:\/\/example\.invalid\/hooks\/orders\s+yes/)
 
     const get = await run(['webhook', 'get', 'mock-webhook-1'])
     assert.equal(get.error, undefined)
     assert.match(get.stdout, /Content type\s+application\/json/)
+    assert.match(get.stdout, /Signed\s+yes/)
     assert.match(get.stdout, /ACME\s+inbound\s+Acme Retail/)
     assert.doesNotMatch(get.stdout, /secret/i)
   })

@@ -1,7 +1,7 @@
 import {Args} from '@oclif/core'
 
 import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
-import {PartnerDetail, PartnerEnvelope, PartnerTransactionSet, PartnerWebhook} from '../../lib/platform.js'
+import {PartnerDetail, PartnerEnvelope, PartnerFlow, PartnerTransactionSet, PartnerWebhook} from '../../lib/platform.js'
 import {cell, renderTable} from '../../lib/table.js'
 
 export default class PartnerGet extends PlatformCommand<typeof PartnerGet> {
@@ -9,7 +9,7 @@ export default class PartnerGet extends PlatformCommand<typeof PartnerGet> {
 
   static description = `${SERVER_DATA}
 
-READY is derived here from the server's facts: an outbound set is ready when a mapping or implementation is attached and the outbound flow is active; an inbound set when the inbound flow is active. Under --json the response is the server's partner shape unchanged, which carries the facts and not the verdict.`
+READY is derived here from the server's facts: an outbound set is ready when a mapping or implementation is attached and the partner has an outbound flow with status active; an inbound set when it has an active inbound flow. A flow is a separate setup step, built and activated in the Tediware app; nothing in this CLI or on the API creates or activates one, so a direction with no flow reads "no outbound flow (build it in the app)" and a pending flow reads "outbound flow pending (activate it in the app)". Under --json the response is the server's partner shape unchanged, which carries the facts and not the verdict.`
 
   static examples = ['<%= config.bin %> partner get ACME', '<%= config.bin %> partner get ACME --json']
 
@@ -55,7 +55,7 @@ READY is derived here from the server's facts: an outbound set is ready when a m
 
     this.log('')
     this.log('Transaction sets:')
-    const flowActive = (direction: string) => partner.flows.some((f) => f.direction === direction && f.status === 'active')
+    const flowFor = (direction: string) => partner.flows.find((f) => f.direction === direction)
     this.log(
       renderTable([
         ['SET', 'DIRECTION', 'DOCUMENT', 'READY'],
@@ -63,14 +63,14 @@ READY is derived here from the server's facts: an outbound set is ready when a m
           ts.transactionSetIdentifier,
           ts.direction,
           document(ts),
-          ready(ts, flowActive(ts.direction)),
+          ready(ts, flowFor(ts.direction)),
         ]),
       ]),
     )
 
     this.log('')
     this.log('Flows:')
-    if (partner.flows.length === 0) this.log('  -')
+    if (partner.flows.length === 0) this.log('  -  (none built yet: flows are built and activated in the Tediware app, from the partner page)')
     for (const f of partner.flows) this.log(`  ${f.direction.padEnd(9)} ${f.status.padEnd(8)} ${cell(f.name)}`)
 
     return partner
@@ -96,11 +96,13 @@ function document(ts: PartnerTransactionSet): string {
  * The verdict the server deliberately leaves to the client. Outbound needs a
  * document to generate from and an active flow to carry it; inbound needs
  * only the flow, since a received document is translated whether or not a
- * mapping is attached.
+ * mapping is attached. The flow reasons say where the fix is, since the flow
+ * is the one prerequisite that cannot be seen or changed from here.
  */
-function ready(ts: PartnerTransactionSet, flowActive: boolean): string {
+function ready(ts: PartnerTransactionSet, flow: PartnerFlow | undefined): string {
   const reasons: string[] = []
-  if (!flowActive) reasons.push(`${ts.direction} flow not active`)
+  if (!flow) reasons.push(`no ${ts.direction} flow (build it in the app)`)
+  else if (flow.status !== 'active') reasons.push(`${ts.direction} flow ${flow.status} (activate it in the app)`)
   if (ts.direction === 'outbound' && !ts.mapping && !ts.implementation) reasons.push('no mapping or implementation')
   return reasons.length === 0 ? 'yes' : `no (${reasons.join('; ')})`
 }

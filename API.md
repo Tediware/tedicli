@@ -662,7 +662,11 @@ one follows. Three rules hold it together:
 - **Raw facts, not computed verdicts.** Flow status, whether a mapping or
   implementation is attached, whether the connection is provisioned. There is
   no server-side `ready` boolean; the CLI derives its `READY` column from
-  these, and a different client is free to derive something else.
+  these, and a different client is free to derive something else. The flow
+  reasons name the step and where it lives ("no outbound flow (build it in
+  the app)", "outbound flow pending (activate it in the app)"), because a
+  flow is built and activated only in the app and an integrator reading the
+  CLI has no other way to learn that.
 
 A list row carries `id`, `key`, `name`, `connection: {id, name, kind} | null`,
 `inboundSets: [codes]`, `outboundSets: [codes]`, and

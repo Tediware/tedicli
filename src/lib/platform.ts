@@ -384,6 +384,8 @@ export interface PartnerWebhook {
   url: string
   kind: string
   contentType?: string | null
+  /** Whether deliveries are signed. The secret itself is never returned. */
+  signingSecretSet?: boolean
   [key: string]: unknown
 }
 
@@ -497,6 +499,7 @@ export interface WebhookSummary {
   name: string
   kind: string
   url: string
+  signingSecretSet?: boolean
   createdAt?: string
   updatedAt?: string
 }

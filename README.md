@@ -303,7 +303,7 @@ next command takes:
 ```bash
 tedi connection list                 # SFTP, AS2 and sandbox connections; get <id> adds the partners on it
 tedi envelope list                   # ISA and GS identifiers; get <id> adds who uses it, as internal or external
-tedi webhook list                    # URLs and kinds; get <id> adds who delivers to it, in which role
+tedi webhook list                    # URLs, kinds, whether signed; get <id> adds who delivers to it, in which role
 tedi flow list --partner ACME --status active
 tedi flow get <id>                   # nodes and edges, no node configuration
 

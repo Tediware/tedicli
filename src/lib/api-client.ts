@@ -844,7 +844,7 @@ const MOCK_ENVELOPES: EnvelopePage['envelopes'] = [
 ]
 
 const MOCK_WEBHOOKS: WebhookPage['webhooks'] = [
-  {id: 'mock-webhook-1', name: 'Orders', kind: 'standard', url: 'https://example.invalid/hooks/orders'},
+  {id: 'mock-webhook-1', name: 'Orders', kind: 'standard', url: 'https://example.invalid/hooks/orders', signingSecretSet: true},
 ]
 
 const MOCK_FLOWS: FlowPage['flows'] = [
