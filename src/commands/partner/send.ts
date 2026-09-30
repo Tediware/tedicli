@@ -1,7 +1,7 @@
 import {Args, Flags} from '@oclif/core'
 
 import {PlatformCommand} from '../../platform-base-command.js'
-import {PartnerSendReceipt, TraceDetail} from '../../lib/platform.js'
+import {PartnerSendReceipt, TraceDetail, UsageIndicator} from '../../lib/platform.js'
 import {EXIT_DEFECT, TediError} from '../../lib/errors.js'
 import {readJsonInput} from '../../lib/edi-input.js'
 import {errorLines} from '../../lib/render.js'
@@ -36,6 +36,7 @@ The receipt means the document was accepted and queued. Validation and delivery 
     '<%= config.bin %> partner send ACME 850 order.json',
     '<%= config.bin %> partner send ACME 856 shipment.json --wait',
     '<%= config.bin %> partner send ACME 850 < order.json',
+    '<%= config.bin %> partner send ACME 850 order.json --usage-indicator T',
   ]
 
   static args = {
@@ -46,6 +47,10 @@ The receipt means the document was accepted and queued. Validation and delivery 
 
   static flags = {
     filename: Flags.string({description: 'Filename to record and deliver under (letters, numbers, ._-).'}),
+    'usage-indicator': Flags.string({
+      description: "ISA15 for this one document: P (production) or T (test). Defaults to the transaction set's setting, which `tedi partner get` shows.",
+      options: ['P', 'T'],
+    }),
     wait: Flags.boolean({
       description: `Poll the trace every ${WAIT_INTERVAL_MS / 1000}s until processing ends (up to ${WAIT_TIMEOUT_MS / 1000}s). Exit 0 delivered, 1 on an error, 2 on timeout.`,
     }),
@@ -70,7 +75,7 @@ The receipt means the document was accepted and queued. Validation and delivery 
     }
 
     const client = await this.getAuthedClient()
-    const receipt = await client.partnerSend(this.requireId(this.args.key, 'partner key'), this.requireId(this.args.set, 'transaction set'), contents, this.flags.filename)
+    const receipt = await client.partnerSend(this.requireId(this.args.key, 'partner key'), this.requireId(this.args.set, 'transaction set'), contents, this.flags.filename, this.flags['usage-indicator'] as UsageIndicator | undefined)
 
     this.log('Processing queued.')
     this.log(`  Interchange ${receipt.interchangeControlNumber} / group ${receipt.groupControlNumber}`)

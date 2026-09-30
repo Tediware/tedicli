@@ -72,6 +72,8 @@ export interface TransactionSummary {
   status?: 'error' | 'delivered' | 'processing'
   /** How many warnings the document's results raised. Absent on a server that predates the channel. */
   warningCount?: number
+  /** ISA15: "P" production, "T" test (an inbound row records what the partner sent). Absent on a server that predates it. */
+  usageIndicator?: string
   acknowledgmentStatus?: 'accepted' | 'rejected' | 'unacknowledged' | null
   partnerKey?: string | null
   duplicateOf?: string | null
@@ -395,7 +397,12 @@ export interface PartnerTransactionSet {
   mapping: {id: string; name: string} | null
   implementation: {id: string; name: string} | null
   directory?: string | null
+  /** The set's ISA15: sent on outbound, expected on inbound. Absent on a server that predates it. */
+  usageIndicator?: UsageIndicator
 }
+
+export type UsageIndicator = 'P' | 'T'
+
 
 /** The show shape of a partner: identity plus everything attached, embedded. */
 export interface PartnerDetail {

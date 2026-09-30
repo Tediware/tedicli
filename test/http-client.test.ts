@@ -905,6 +905,16 @@ describe('HttpApiClient', () => {
       assert.equal(receipt.traceGuid, 'trace-1')
       assert.equal(receipt.ediTransactionId, 'txn-1')
     })
+
+    it('partnerSend sends a usage indicator as overrides.usageIndicator, and no overrides without one', async () => {
+      const {calls} = stubFetch(() => ({
+        body: JSON.stringify({message: 'Processing queued', interchangeControlNumber: '1', groupControlNumber: '1', traceGuid: 't', ediTransactionId: 'x'}),
+      }))
+      await client('sk-test').partnerSend('acme', '850', {po: 1}, undefined, 'T')
+      assert.deepEqual(JSON.parse(calls[0].body!), {contents: {po: 1}, overrides: {usageIndicator: 'T'}})
+      await client('sk-test').partnerSend('acme', '850', {po: 1})
+      assert.deepEqual(JSON.parse(calls[1].body!), {contents: {po: 1}})
+    })
   })
 })
 

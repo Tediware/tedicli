@@ -58,10 +58,11 @@ READY is derived here from the server's facts: an outbound set is ready when a m
     const flowFor = (direction: string) => partner.flows.find((f) => f.direction === direction)
     this.log(
       renderTable([
-        ['SET', 'DIRECTION', 'DOCUMENT', 'READY'],
+        ['SET', 'DIRECTION', 'USAGE', 'DOCUMENT', 'READY'],
         ...partner.transactionSets.map((ts) => [
           ts.transactionSetIdentifier,
           ts.direction,
+          cell(ts.usageIndicator),
           document(ts),
           ready(ts, flowFor(ts.direction)),
         ]),

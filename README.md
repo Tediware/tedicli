@@ -268,6 +268,7 @@ tedi partner get ACME                # one partner: connection, envelopes, webho
 tedi partner send ACME 850 order.json       # your JSON in, EDI out to the partner
 tedi partner send ACME 856 ship.json --wait # ...and wait for the trace to finish (exit 1 on error)
 cat order.json | tedi partner send ACME 850 # the file argument reads stdin when omitted
+tedi partner send ACME 850 order.json --usage-indicator T  # one test document (ISA15=T) for a set that is live
 tedi partner receive ACME 850.edi           # raw partner EDI into the inbound flow
 
 tedi trace <guid>                    # everything on a trace: transactions, results and their payloads, feed, artifacts, logs

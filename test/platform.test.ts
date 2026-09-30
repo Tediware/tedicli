@@ -102,7 +102,7 @@ describe('data-plane commands (mock backend)', () => {
     const {stdout, error} = await run(['transaction', 'list'])
     assert.equal(error, undefined)
     // The warning is its own axis: the document still reads delivered.
-    assert.match(stdout, /mock-txn-2\s+outbound\s+856\s+-\s+ACME\s+000000002\s+delivered \(1 warning\)\s+accepted/)
+    assert.match(stdout, /mock-txn-2\s+outbound\s+856 \(T\)\s+-\s+ACME\s+000000002\s+delivered \(1 warning\)\s+accepted/)
     assert.match(stdout, /mock-txn-1\s+inbound\s+850\s+32185544\s+ACME\s+000000001\s+delivered\s+n\/a/)
     assert.doesNotMatch(stdout, /^\s*ID.*\bWARN/m)
   })
@@ -151,6 +151,17 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(stdout, /Input\s+mock-artifact-1\s+in\.edi\s+from EDI Endpoint/)
     assert.match(stdout, /Output\s+-/)
     assert.doesNotMatch(stdout, /USAGE\s+TYPE/)
+  })
+
+  it('transaction get names the usage indicator, and list flags only test documents', async () => {
+    const got = await run(['transaction', 'get', 'mock-txn-2'])
+    assert.equal(got.error, undefined)
+    assert.match(got.stdout, /Usage indicator\s+T \(test\)/)
+
+    const listed = await run(['transaction', 'list'])
+    assert.equal(listed.error, undefined)
+    assert.match(listed.stdout, /mock-txn-2\s+outbound\s+856 \(T\)/)
+    assert.match(listed.stdout, /mock-txn-1\s+inbound\s+850\s/)
   })
 
   it('transaction get --trace resolves the one transaction on the trace', async () => {
@@ -300,7 +311,7 @@ describe('data-plane commands (mock backend)', () => {
     const transactions = JSON.parse((await run(['transaction', 'list', '--json', '--compact'])).stdout)
     assert.deepEqual(Object.keys(transactions.ediTransactions[0]).sort(), [
       'acknowledgmentStatus', 'createdAt', 'deliveredAt', 'direction', 'id', 'partnerKey', 'reference', 'status',
-      'traceGuid', 'transactionSetIdentifier', 'warningCount',
+      'traceGuid', 'transactionSetIdentifier', 'usageIndicator', 'warningCount',
     ])
 
     const results = JSON.parse((await run(['result', 'list', '--json', '--compact'])).stdout)
@@ -427,6 +438,17 @@ describe('data-plane commands (mock backend)', () => {
     assert.doesNotMatch(stdout, /<trace>/)
   })
 
+  it('partner send --usage-indicator takes P or T and nothing else', async () => {
+    const file = join(dir, 'order.json')
+    await writeFile(file, JSON.stringify({po: '123'}), 'utf8')
+    const ok = await run(['partner', 'send', 'ACME', '850', file, '--usage-indicator', 'T'])
+    assert.equal(ok.error, undefined)
+    assert.match(ok.stdout, /Processing queued/)
+
+    const bad = await run(['partner', 'send', 'ACME', '850', file, '--usage-indicator', 'X'])
+    assert.match(bad.error?.message ?? '', /Expected --usage-indicator=X to be one of: P, T/)
+  })
+
   it('partner send reads stdin when the file is omitted on a pipe', async () => {
     const {stdout, error} = await withStdin(JSON.stringify({po: '1'}), () => run(['partner', 'send', 'ACME', '850']))
     assert.equal(error, undefined)
@@ -523,9 +545,9 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(stdout, /Host\s+sftp\.example\.invalid:22 as acme/)
     assert.match(stdout, /theirs ZZ RECEIVERID/)
     assert.match(stdout, /inbound https:\/\/example\.invalid\/hooks\/orders \(standard\)/)
-    assert.match(stdout, /850\s+inbound\s+mapping: Acme 850\s+yes/)
-    assert.match(stdout, /856\s+outbound\s+implementation: Acme 856\s+yes/)
-    assert.match(stdout, /810\s+outbound\s+-\s+no \(no mapping or implementation\)/)
+    assert.match(stdout, /850\s+inbound\s+P\s+mapping: Acme 850\s+yes/)
+    assert.match(stdout, /856\s+outbound\s+T\s+implementation: Acme 856\s+yes/)
+    assert.match(stdout, /810\s+outbound\s+P\s+-\s+no \(no mapping or implementation\)/)
     assert.match(stdout, /inbound\s+active\s+Acme Inbound/)
   })
 

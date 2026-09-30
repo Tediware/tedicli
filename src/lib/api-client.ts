@@ -84,6 +84,7 @@ import {
   TransactionListQuery,
   TransactionPage,
   TransactionSummary,
+  UsageIndicator,
   WebhookDetail,
   WebhookPage,
 } from './platform.js'
@@ -202,7 +203,7 @@ export interface ApiClient {
   artifactGet(id: string): Promise<ArtifactContent>
   partnerList(query: PageQuery): Promise<PartnerPage>
   partnerGet(key: string): Promise<PartnerDetail>
-  partnerSend(key: string, code: string, contents: unknown, filename?: string): Promise<PartnerSendReceipt>
+  partnerSend(key: string, code: string, contents: unknown, filename?: string, usageIndicator?: UsageIndicator): Promise<PartnerSendReceipt>
   partnerReceive(key: string, contents: string, filename?: string): Promise<PartnerReceiveReceipt>
   suggestionSubmit(input: SuggestionInput): Promise<SuggestionReceipt>
   traceGet(guid: string): Promise<TraceDetail>
@@ -900,6 +901,7 @@ const MOCK_TRANSACTIONS: TransactionSummary[] = [
     direction: 'inbound',
     status: 'delivered',
     warningCount: 0,
+    usageIndicator: 'P',
     acknowledgmentStatus: null,
     partnerKey: 'ACME',
     resendCount: 0,
@@ -922,6 +924,7 @@ const MOCK_TRANSACTIONS: TransactionSummary[] = [
     direction: 'outbound',
     status: 'delivered',
     warningCount: 1,
+    usageIndicator: 'T',
     acknowledgmentStatus: 'accepted',
     partnerKey: 'ACME',
     resendCount: 0,
@@ -1064,6 +1067,7 @@ const compactTransaction = (t: TransactionSummary) =>
     id: t.id,
     createdAt: t.createdAt,
     direction: t.direction,
+    usageIndicator: t.usageIndicator,
     partnerKey: t.partnerKey ?? null,
     transactionSetIdentifier: t.transactionSetIdentifier,
     reference: t.reference ?? null,
@@ -1151,9 +1155,9 @@ const MOCK_PARTNER_DETAIL: PartnerDetail = {
   outboundWebhook: null,
   errorWebhook: null,
   transactionSets: [
-    {transactionSetIdentifier: '850', direction: 'inbound', mapping: {id: 'mock-mapping-1', name: 'Acme 850'}, implementation: null},
-    {transactionSetIdentifier: '856', direction: 'outbound', mapping: null, implementation: {id: 'mock-impl-1', name: 'Acme 856'}},
-    {transactionSetIdentifier: '810', direction: 'outbound', mapping: null, implementation: null},
+    {transactionSetIdentifier: '850', direction: 'inbound', mapping: {id: 'mock-mapping-1', name: 'Acme 850'}, implementation: null, usageIndicator: 'P'},
+    {transactionSetIdentifier: '856', direction: 'outbound', mapping: null, implementation: {id: 'mock-impl-1', name: 'Acme 856'}, usageIndicator: 'T'},
+    {transactionSetIdentifier: '810', direction: 'outbound', mapping: null, implementation: null, usageIndicator: 'P'},
   ],
   flows: [
     {id: 'mock-flow-1', name: 'Acme Inbound', direction: 'inbound', status: 'active'},
@@ -1813,12 +1817,12 @@ export class HttpApiClient implements ApiClient {
     })
   }
 
-  async partnerSend(key: string, code: string, contents: unknown, filename?: string): Promise<PartnerSendReceipt> {
+  async partnerSend(key: string, code: string, contents: unknown, filename?: string, usageIndicator?: UsageIndicator): Promise<PartnerSendReceipt> {
     return this.platformJson<PartnerSendReceipt>(
       `/platform/partners/${encodeURIComponent(key)}/ts/${encodeURIComponent(code)}`,
       {
         method: 'POST',
-        body: {contents, filename},
+        body: usageIndicator ? {contents, filename, overrides: {usageIndicator}} : {contents, filename},
         rejected: submissionRefusal,
         // The 404 names the partner or, by `reason`, the set; the id here is
         // whichever the reason turns out to be about.

@@ -79,7 +79,8 @@ STATUS is processing until the document's run records its first result, error wh
         ...page.ediTransactions.map((t) => [
           t.id,
           t.direction ?? (t.incoming ? 'inbound' : 'outbound'),
-          cell(t.transactionSetIdentifier),
+          // Test documents are flagged; production, the common case, stays bare.
+          t.usageIndicator && t.usageIndicator !== 'P' ? `${cell(t.transactionSetIdentifier)} (${t.usageIndicator})` : cell(t.transactionSetIdentifier),
           cell(t.reference),
           cell(t.partnerKey),
           cell(t.interchangeControlNumber),

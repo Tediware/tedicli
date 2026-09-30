@@ -40,6 +40,7 @@ Warnings are non-fatal notes the run raised, each naming the result that raised 
     const lines: Array<[string, string]> = [
       ['Direction', txn.direction ?? (txn.incoming ? 'inbound' : 'outbound')],
       ['Transaction set', cell(txn.transactionSetIdentifier)],
+      ['Usage indicator', usageLabel(txn.usageIndicator)],
       ['Partner', cell(txn.partnerKey)],
       ['Status', txn.status],
       // Warnings sit under the status because that is the question they
@@ -84,6 +85,15 @@ Warnings are non-fatal notes the run raised, each naming the result that raised 
 
     return txn
   }
+}
+
+const USAGE_LABELS: Record<string, string> = {P: 'production', T: 'test', I: 'information'}
+
+/** ISA15 with its meaning: "T (test)". A code outside the X12 list prints as sent. */
+export function usageLabel(value: string | null | undefined): string {
+  if (!value) return cell(value)
+  const label = USAGE_LABELS[value]
+  return label ? `${value} (${label})` : value
 }
 
 /**

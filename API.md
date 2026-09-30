@@ -684,7 +684,8 @@ the delivery method, and:
       "direction": "inbound",
       "mapping": { "id": "...", "name": "ACME 850 inbound" },
       "implementation": null,
-      "directory": "/in"
+      "directory": "/in",
+      "usageIndicator": "P"
     }
   ],
   "flows": [
@@ -692,6 +693,11 @@ the delivery method, and:
   ]
 }
 ```
+
+`usageIndicator` is the set's ISA15, `"P"` or `"T"`: what Tediware sends on an
+outbound set, and what it expects on an inbound one (a document carrying the
+other value is processed with a `usage_indicator_mismatch` warning). Backs the
+USAGE column on `tedi partner get`.
 
 Keys resolve in any case and are returned uppercase. A miss is
 `404 not_found` with `reason: "partner"`.
@@ -879,6 +885,13 @@ still `delivered`, so a caller filtering on `status=error` keeps seeing exactly
 what it saw before. Backs `--warnings` / `--no-warnings` on `transaction list`,
 and the count printed beside STATUS.
 
+Every row carries `usageIndicator`, the interchange's ISA15: `"P"` production,
+`"T"` test. An inbound row records what the partner sent, uppercased, so an `"I"`
+(information) or an off-list code can appear; rows recorded before the field
+existed read `"P"`. Test documents go through the same flow as production ones,
+so this field is the only place the difference shows. Backs the `(T)` after the
+set on `transaction list` and the Usage indicator line on `transaction get`.
+
 `direction=inbound|outbound` is the vocabulary every other record already used.
 `incoming=true|false` stays, shipped and consumed; both are accepted and the
 serializer emits both. Sending both with values that disagree is
@@ -908,7 +921,7 @@ and anything but `true` or `false` is `400 invalid_parameter`. `errorMessage`
 is cut to 200 characters.
 
 ```
-edi_transactions  id, createdAt, direction, partnerKey, transactionSetIdentifier,
+edi_transactions  id, createdAt, direction, usageIndicator, partnerKey, transactionSetIdentifier,
                   reference, status, acknowledgmentStatus, warningCount, deliveredAt,
                   traceGuid
 results           id, traceGuid, createdAt, nodeName, status, partnerKey, errorMessage
@@ -939,7 +952,8 @@ longer show each other's results. It also carries:
   where this document is fine and a sibling on its trace is not.
 - `warningCount` and `warnings`, the channel above in full. Each entry is
   `{code, message, detail?, resultId}`: `code` is the stable identifier to
-  branch on (`mapping_failed` is the only one today), `message` is the prose,
+  branch on (`mapping_failed`, `sender_mismatch`, `usage_indicator_mismatch`,
+  `structural_error`, `invalid_date`), `message` is the prose,
   `detail` is an optional object whose shape depends on the code, and
   `resultId` names the result that raised it. Backs the lines `transaction get`
   prints under the status.
@@ -1027,7 +1041,12 @@ was already structured this way and is the model it follows.
 ### Submissions
 
 `POST /platform/partners/:key/ts/:code` takes
-`{contents, filename?, overrides?}` and answers:
+`{contents, filename?, overrides?}`. `overrides.usageIndicator` (`"P"` or `"T"`)
+sets ISA15 for this one submission in place of the set's `usageIndicator`; any
+other value is `400 invalid_parameter`, refused before a control number is used.
+The other override keys replace the ISA sender and receiver ids and qualifiers;
+the CLI sends only `usageIndicator`, from `partner send --usage-indicator`. It
+answers:
 
 ```json
 {
