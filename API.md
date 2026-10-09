@@ -11,7 +11,7 @@
 
 # tedi CLI: the API surface
 
-The HTTP contract the CLI consumes. Two surfaces are documented here:
+The HTTP contract the CLI consumes. Four surfaces are documented here:
 
 - **X12 reference** (`/api/x12`), backing `tedi x12 ...`: licensed reference
   lookup, read-only.
@@ -24,10 +24,12 @@ The HTTP contract the CLI consumes. Two surfaces are documented here:
 - **MCP** (`/mcp`), backing `tedi mcp serve`: the platform's Model Context
   Protocol server, which the CLI bridges to stdio without adding anything.
 
-This is not a public product API. It is reachable and stable enough to build the
-CLI against, but it is versioned with the CLI, not published as a third-party
-API. Treat the CLI as the supported interface and this document as the
-integration contract behind it.
+The reference (`/api/x12`) and inspection (`/api/edi`) surfaces are not a public
+product API. They are reachable and stable enough to build the CLI against, but
+they are versioned with the CLI, not published as a third-party API. The data
+plane (`/platform`) and MCP (`/mcp`) are the public Platform API, documented at
+https://tediware.com/resources/api-docs; this file records how the CLI consumes
+them.
 
 ## Base
 
