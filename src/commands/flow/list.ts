@@ -9,7 +9,7 @@ export default class FlowList extends PlatformCommand<typeof FlowList> {
 
   static description = `${SERVER_DATA}
 
-Only the current version of each flow is listed. FREQUENCY is the polling interval in minutes, followed by the minute it starts at when the flow has an offset (15m at :08 polls at :08, :23, :38 and :53 UTC); 0 means paused. Only an active flow accepts traffic.`
+Only the current version of each flow is listed. FREQUENCY is the polling interval in minutes, followed by the offset when the flow has one (15m, offset :08 polls at :08, :23, :38 and :53 UTC); 0 means paused. Only an active flow accepts traffic.`
 
   static examples = [
     '<%= config.bin %> flow list',

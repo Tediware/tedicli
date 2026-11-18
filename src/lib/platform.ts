@@ -680,8 +680,8 @@ export function applyQuery(url: URL, query: Record<string, string | number | boo
   }
 }
 
-/** A flow's offset as a minute past the hour (" at :08"), or nothing when it runs on the clock boundary. */
+/** A flow's offset as a minute past the hour (", offset :08"), or nothing when it runs on the clock boundary. */
 export function flowOffsetSuffix(flow: Pick<FlowSummary, 'scheduleOffsetMinutes'>): string {
   const offset = flow.scheduleOffsetMinutes ?? 0
-  return offset === 0 ? '' : ` at :${String(offset).padStart(2, '0')}`
+  return offset === 0 ? '' : `, offset :${String(offset).padStart(2, '0')}`
 }

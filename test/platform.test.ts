@@ -675,7 +675,7 @@ describe('data-plane commands (mock backend)', () => {
   it('flow list filters, and flow get shows nodes and edges by name', async () => {
     const list = await run(['flow', 'list'])
     assert.equal(list.error, undefined)
-    assert.match(list.stdout, /mock-flow-1\s+Acme Inbound\s+ACME\s+inbound\s+active\s+5m at :03\s+1\s+no/)
+    assert.match(list.stdout, /mock-flow-1\s+Acme Inbound\s+ACME\s+inbound\s+active\s+5m, offset :03\s+1\s+no/)
     assert.match(list.stdout, /mock-flow-2\s+Acme Outbound\s+ACME\s+outbound\s+active\s+paused\s+2\s+no/)
 
     const filtered = await run(['flow', 'list', '--direction', 'inbound', '--partner', 'acme'])
@@ -688,7 +688,7 @@ describe('data-plane commands (mock backend)', () => {
     assert.equal(get.error, undefined)
     assert.match(get.stdout, /Frequency\s+paused/)
     const offset = await run(['flow', 'get', 'mock-flow-1'])
-    assert.match(offset.stdout, /Frequency\s+every 5 minutes at :03/)
+    assert.match(offset.stdout, /Frequency\s+every 5 minutes, offset :03/)
     assert.match(get.stdout, /mock-node-2\s+Acme 856 mapping\s+transformation\s+mapping/)
     assert.match(get.stdout, /Partner endpoint -> Acme 856 mapping/)
     assert.match(get.stdout, /Acme 856 mapping -> Upload/)
