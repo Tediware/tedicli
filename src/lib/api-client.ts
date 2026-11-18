@@ -849,7 +849,7 @@ const MOCK_WEBHOOKS: WebhookPage['webhooks'] = [
 ]
 
 const MOCK_FLOWS: FlowPage['flows'] = [
-  {id: 'mock-flow-1', name: 'Acme Inbound', direction: 'inbound', status: 'active', frequency: 5, versionNumber: 1, usesSandbox: false, partner: MOCK_PARTNER_REF},
+  {id: 'mock-flow-1', name: 'Acme Inbound', direction: 'inbound', status: 'active', frequency: 5, scheduleOffsetMinutes: 3, versionNumber: 1, usesSandbox: false, partner: MOCK_PARTNER_REF},
   {id: 'mock-flow-2', name: 'Acme Outbound', direction: 'outbound', status: 'active', frequency: 0, versionNumber: 2, usesSandbox: false, partner: MOCK_PARTNER_REF},
 ]
 

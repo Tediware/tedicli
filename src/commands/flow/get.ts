@@ -1,7 +1,7 @@
 import {Args} from '@oclif/core'
 
 import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
-import {FlowDetail} from '../../lib/platform.js'
+import {FlowDetail, flowOffsetSuffix} from '../../lib/platform.js'
 import {renderTable} from '../../lib/table.js'
 
 export default class FlowGet extends PlatformCommand<typeof FlowGet> {
@@ -24,7 +24,7 @@ Node configuration is not included. A node's connection, webhook, mapping or imp
     this.log(`${f.name}  (${f.partner.key}, ${f.direction})`)
     this.log(`Id             ${f.id}`)
     this.log(`Status         ${f.status}`)
-    this.log(`Frequency      ${f.frequency === 0 ? 'paused' : `every ${f.frequency} minutes`}`)
+    this.log(`Frequency      ${f.frequency === 0 ? 'paused' : `every ${f.frequency} minutes${flowOffsetSuffix(f)}`}`)
     this.log(`Version        ${f.versionNumber}`)
     this.log(`Sandbox        ${f.usesSandbox ? 'yes' : 'no'}`)
 

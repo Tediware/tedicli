@@ -736,7 +736,9 @@ A miss on any show is `404 not_found` with `reason` naming the resource
 in your organization." A malformed id is a miss, not a 400.
 
 Flows list only the current version of each; superseded versions drop out.
-`status` is `pending|active`, `frequency` is minutes with `0` paused, and the
+`status` is `pending|active`, `frequency` is minutes with `0` paused,
+`scheduleOffsetMinutes` is the minute within each interval that an inbound flow
+polls (UTC, `0` on the clock boundary), and the
 show adds `nodes: [{id, name, kind, service}]` and `connections: [{from, to}]`
 with no node configuration. `direction` and `status` outside their vocabulary
 are refused with `invalid_parameter`; an unknown partner key is an empty page.

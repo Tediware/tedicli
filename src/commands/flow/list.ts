@@ -1,7 +1,7 @@
 import {Flags} from '@oclif/core'
 
 import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
-import {FlowPage} from '../../lib/platform.js'
+import {FlowPage, flowOffsetSuffix} from '../../lib/platform.js'
 import {renderTable} from '../../lib/table.js'
 
 export default class FlowList extends PlatformCommand<typeof FlowList> {
@@ -9,7 +9,7 @@ export default class FlowList extends PlatformCommand<typeof FlowList> {
 
   static description = `${SERVER_DATA}
 
-Only the current version of each flow is listed. FREQUENCY is the polling interval in minutes; 0 means paused. Only an active flow accepts traffic.`
+Only the current version of each flow is listed. FREQUENCY is the polling interval in minutes, followed by the minute it starts at when the flow has an offset (15m at :08 polls at :08, :23, :38 and :53 UTC); 0 means paused. Only an active flow accepts traffic.`
 
   static examples = [
     '<%= config.bin %> flow list',
@@ -48,7 +48,7 @@ Only the current version of each flow is listed. FREQUENCY is the polling interv
           f.partner.key,
           f.direction,
           f.status,
-          f.frequency === 0 ? 'paused' : `${f.frequency}m`,
+          f.frequency === 0 ? 'paused' : `${f.frequency}m${flowOffsetSuffix(f)}`,
           String(f.versionNumber),
           f.usesSandbox ? 'yes' : 'no',
         ]),

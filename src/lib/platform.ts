@@ -526,6 +526,8 @@ export interface FlowSummary {
   status: string
   /** Polling interval in minutes; 0 is paused. */
   frequency: number
+  /** Minutes into each interval that the flow polls, in UTC. Absent from a server that predates it. */
+  scheduleOffsetMinutes?: number
   versionNumber: number
   usesSandbox: boolean
   partner: PartnerRef
@@ -676,4 +678,10 @@ export function applyQuery(url: URL, query: Record<string, string | number | boo
   for (const [key, value] of Object.entries(query)) {
     if (value !== undefined) url.searchParams.set(key, String(value))
   }
+}
+
+/** A flow's offset as a minute past the hour (" at :08"), or nothing when it runs on the clock boundary. */
+export function flowOffsetSuffix(flow: Pick<FlowSummary, 'scheduleOffsetMinutes'>): string {
+  const offset = flow.scheduleOffsetMinutes ?? 0
+  return offset === 0 ? '' : ` at :${String(offset).padStart(2, '0')}`
 }
