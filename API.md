@@ -735,6 +735,14 @@ A miss on any show is `404 not_found` with `reason` naming the resource
 `implementation`, `source`), and the CLI prints "No <resource> '<id>'
 in your organization." A malformed id is a miss, not a 400.
 
+A hosted SFTP connection's show carries the login (`sftpUsername`,
+`hostedSftpAllowedIps`, `hostedSftpSetupStatus`, `hostedSftpSetupError`) and
+`hostedSftpServer: {host, port, staticIps, hostKeyFingerprints: [{keyType,
+fingerprint}]}`, what the partner needs to reach the server; `null` on any
+other kind. A server that predates it leaves `hostedSftpServer` out, and
+`connection get` and `partner get` then print the username without the host.
+The password is never returned.
+
 Flows list only the current version of each; superseded versions drop out.
 `status` is `pending|active`, `frequency` is minutes with `0` paused,
 `scheduleOffsetMinutes` is the minute within each interval that an inbound flow

@@ -9,6 +9,7 @@ import {ConfigStore, DEFAULT_X12_RELEASE, isConfigKey} from '../src/lib/config-s
 import {FileCredentialStore} from '../src/lib/credentials.js'
 import {JsonNotSupportedError} from '../src/lib/errors.js'
 import {wantsColor, wantsFullCodeList} from '../src/lib/output.js'
+import {hostedSftpRows} from '../src/lib/render.js'
 import {closestCommand, distance} from '../src/hooks/command_not_found/did-you-mean.js'
 
 describe('wantsColor', () => {
@@ -202,5 +203,32 @@ describe('distance', () => {
 
   it('caps rather than walking a long comparison', () => {
     assert.ok(distance('a', 'abcdefghij') > 4)
+  })
+})
+
+describe('hostedSftpRows', () => {
+  const login = {id: 'c', name: 'Hosted', kind: 'hosted_sftp', sftpUsername: 'globex', hostedSftpAllowedIps: [], hostedSftpSetupStatus: null}
+
+  it('gives the server, its keys, the allowlist and the login state, with a key of no known type bare', () => {
+    const rows = hostedSftpRows({
+      ...login,
+      hostedSftpServer: {host: 'sftp.example.invalid', port: 22, staticIps: ['192.0.2.10'], hostKeyFingerprints: [{keyType: 'ED25519', fingerprint: 'SHA256:a'}, {keyType: null, fingerprint: 'SHA256:b'}]},
+    })
+    assert.deepEqual(rows, [
+      ['Host', 'sftp.example.invalid:22 as globex'],
+      ['Addresses', '192.0.2.10'],
+      ['Host keys', 'ED25519 SHA256:a'],
+      ['', 'SHA256:b'],
+      ['Allowed from', 'any address'],
+      ['Login', 'inactive'],
+    ])
+  })
+
+  it('falls back to the username alone when the server sends no details', () => {
+    assert.deepEqual(hostedSftpRows({...login, hostedSftpSetupStatus: 'pending'}), [
+      ['Username', 'globex'],
+      ['Allowed from', 'any address'],
+      ['Login', 'pending'],
+    ])
   })
 })

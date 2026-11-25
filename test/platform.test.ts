@@ -551,6 +551,19 @@ describe('data-plane commands (mock backend)', () => {
     assert.match(stdout, /inbound\s+active\s+Acme Inbound/)
   })
 
+  it('partner get shows a hosted SFTP login under its connection, indented to the connection block', async () => {
+    const {stdout, error} = await run(['partner', 'get', 'globex'])
+    assert.equal(error, undefined)
+    assert.match(stdout, /Connection {5}Globex hosted \(hosted_sftp\)\n/)
+    assert.match(stdout, /\n {2}Host {9}sftp\.example\.invalid:22 as globex-edi\n/)
+    assert.match(stdout, /\n {2}Host keys {4}ED25519 SHA256:mockEd25519Fingerprint\n {15}RSA SHA256:mockRsaFingerprint\n/)
+    assert.match(stdout, /\n {2}Allowed from 203\.0\.113\.7, 198\.51\.100\.0\/24\n/)
+    assert.match(stdout, /\n {2}Login {8}active\n/)
+
+    const json = await run(['partner', 'get', 'globex', '--json'])
+    assert.equal(JSON.parse(json.stdout).connection.hostedSftpServer.host, 'sftp.example.invalid')
+  })
+
   it('partner get on an unknown key exits 1 and points at partner list', async () => {
     const {error, exit} = await run(['partner', 'get', 'nope'])
     assert.match(error?.message ?? '', /No partner 'nope' in your organization/)
@@ -643,6 +656,34 @@ describe('data-plane commands (mock backend)', () => {
     const missing = await run(['connection', 'get', 'nope'])
     assert.equal(missing.exit, 1)
     assert.match(missing.error?.message ?? '', /No connection 'nope'/)
+  })
+
+  it('connection get shows what to give a partner for a hosted SFTP login, never a password', async () => {
+    const get = await run(['connection', 'get', 'mock-connection-2'])
+    assert.equal(get.error, undefined)
+    assert.match(get.stdout, /Globex hosted  \(hosted_sftp\)/)
+    assert.match(get.stdout, /\nHost {11}sftp\.example\.invalid:22 as globex-edi\n/)
+    assert.match(get.stdout, /\nAddresses {6}192\.0\.2\.10, 192\.0\.2\.11\n/)
+    assert.match(get.stdout, /\nHost keys {6}ED25519 SHA256:mockEd25519Fingerprint\n {15}RSA SHA256:mockRsaFingerprint\n/)
+    assert.match(get.stdout, /\nAllowed from {3}203\.0\.113\.7, 198\.51\.100\.0\/24\n/)
+    assert.match(get.stdout, /\nLogin {10}active\n/)
+    assert.match(get.stdout, /Directories\s+in toTediware, out fromTediware/)
+    assert.doesNotMatch(get.stdout, /password/i)
+
+    const json = await run(['connection', 'get', 'mock-connection-2', '--json'])
+    assert.deepEqual(JSON.parse(json.stdout).hostedSftpServer.staticIps, ['192.0.2.10', '192.0.2.11'])
+  })
+
+  it('connection get shows a hosted SFTP login from a server that sends no server details', async () => {
+    const get = await run(['connection', 'get', 'mock-connection-3'])
+    assert.equal(get.error, undefined)
+    assert.match(get.stdout, /\nUsername {7}initech\n/)
+    assert.doesNotMatch(get.stdout, /^(Host|Addresses)/m)
+    assert.match(get.stdout, /\nAllowed from {3}any address\n/)
+    assert.match(get.stdout, /\nLogin {10}error \(Username is not available\)\n/)
+
+    const json = await run(['connection', 'get', 'mock-connection-3', '--json'])
+    assert.equal('hostedSftpServer' in JSON.parse(json.stdout), false)
   })
 
   it('envelope list and get show the identifiers and the role per partner', async () => {

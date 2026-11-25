@@ -304,7 +304,8 @@ The rest of your configuration reads the same way, by id. Every `list` has
 next command takes:
 
 ```bash
-tedi connection list                 # SFTP, AS2 and sandbox connections; get <id> adds the partners on it
+tedi connection list                 # SFTP, hosted SFTP, AS2 and sandbox connections; get <id> adds the partners on it,
+                                     # and for a hosted SFTP login what to give the partner
 tedi envelope list                   # ISA and GS identifiers; get <id> adds who uses it, as internal or external
 tedi webhook list                    # URLs, kinds, whether signed; get <id> adds who delivers to it, in which role
 tedi flow list --partner ACME --status active

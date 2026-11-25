@@ -3,7 +3,7 @@
  * and an artifact read the same whichever command shows them.
  */
 
-import {ArtifactPointer, ArtifactRole, PlatformResult, ResultDetail, TraceArtifact, Warning} from './platform.js'
+import {ArtifactPointer, ArtifactRole, PartnerConnection, PlatformResult, ResultDetail, TraceArtifact, Warning} from './platform.js'
 import {cell, formatTime, renderTable} from './table.js'
 
 /** The first line of a possibly multi-line message. */
@@ -82,4 +82,31 @@ export function roleLine(label: string, role: ArtifactRole | null): string {
 /** One result as a table row: created, node, status, one-line error. */
 export function resultRow(r: PlatformResult): string[] {
   return [formatTime(r.createdAt), cell(r.nodeName), r.status, firstLine(r.detail.errorMessage) || '-']
+}
+
+/**
+ * A hosted SFTP login as label and value pairs, for `connection get` and
+ * `partner get` to pad to their own columns. A label of '' continues the line
+ * above. Without the server's details (an older server) the username stands
+ * alone where the host would be.
+ */
+export function hostedSftpRows(c: PartnerConnection): [string, string][] {
+  const rows: [string, string][] = []
+  const server = c.hostedSftpServer
+  if (server) {
+    rows.push(['Host', `${server.host}:${server.port}${c.sftpUsername ? ` as ${c.sftpUsername}` : ''}`])
+    const ips = server.staticIps ?? []
+    if (ips.length > 0) rows.push(['Addresses', ips.join(', ')])
+    for (const [i, key] of (server.hostKeyFingerprints ?? []).entries()) {
+      rows.push([i === 0 ? 'Host keys' : '', key.keyType ? `${key.keyType} ${key.fingerprint}` : key.fingerprint])
+    }
+  } else {
+    rows.push(['Username', cell(c.sftpUsername)])
+  }
+
+  const allowed = c.hostedSftpAllowedIps ?? []
+  rows.push(['Allowed from', allowed.length > 0 ? allowed.join(', ') : 'any address'])
+  const status = c.hostedSftpSetupStatus ?? 'inactive'
+  rows.push(['Login', `${status}${c.hostedSftpSetupError ? ` (${c.hostedSftpSetupError})` : ''}`])
+  return rows
 }

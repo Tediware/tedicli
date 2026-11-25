@@ -2,6 +2,7 @@ import {Args} from '@oclif/core'
 
 import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
 import {PartnerDetail, PartnerEnvelope, PartnerFlow, PartnerTransactionSet, PartnerWebhook} from '../../lib/platform.js'
+import {hostedSftpRows} from '../../lib/render.js'
 import {cell, renderTable} from '../../lib/table.js'
 
 export default class PartnerGet extends PlatformCommand<typeof PartnerGet> {
@@ -33,6 +34,9 @@ READY is derived here from the server's facts: an outbound set is ready when a m
       const c = partner.connection
       this.log(`Connection     ${c.name} (${c.kind})`)
       if (c.host) this.log(`  Host         ${c.host}${c.port ? `:${c.port}` : ''}${c.username ? ` as ${c.username}` : ''}`)
+      if (c.kind === 'hosted_sftp') {
+        for (const [label, value] of hostedSftpRows(c)) this.log(`  ${label.padEnd(13)}${value}`)
+      }
       if (c.inboundDirectory || c.outboundDirectory) {
         this.log(`  Directories  in ${cell(c.inboundDirectory)}, out ${cell(c.outboundDirectory)}`)
       }

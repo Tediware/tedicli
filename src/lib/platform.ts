@@ -364,7 +364,20 @@ export interface PartnerConnection {
   partnerUrl?: string | null
   as2Ready?: boolean
   provisioned?: boolean
+  sftpUsername?: string | null
+  hostedSftpAllowedIps?: string[]
+  hostedSftpSetupStatus?: string | null
+  hostedSftpSetupError?: string | null
+  // Absent from a server older than hosted SFTP's server details.
+  hostedSftpServer?: HostedSftpServer | null
   [key: string]: unknown
+}
+
+export interface HostedSftpServer {
+  host: string
+  port: number
+  staticIps: string[]
+  hostKeyFingerprints: {keyType?: string | null; fingerprint: string}[]
 }
 
 export interface PartnerEnvelope {

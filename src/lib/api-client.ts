@@ -565,7 +565,7 @@ export class MockApiClient implements ApiClient {
     this.requireToken()
     const row = MOCK_PARTNERS.find((p) => p.key === key.toUpperCase())
     if (!row) throw new DataNotFoundError('partner', key)
-    return MOCK_PARTNER_DETAIL
+    return row.key === MOCK_HOSTED_PARTNER_DETAIL.key ? MOCK_HOSTED_PARTNER_DETAIL : MOCK_PARTNER_DETAIL
   }
 
   async partnerSend(key: string): Promise<PartnerSendReceipt> {
@@ -637,8 +637,9 @@ export class MockApiClient implements ApiClient {
 
   async connectionGet(id: string): Promise<ConnectionDetail> {
     this.requireToken()
-    if (id !== MOCK_CONNECTION_DETAIL.id) throw new DataNotFoundError('connection', id)
-    return MOCK_CONNECTION_DETAIL
+    const detail = MOCK_CONNECTION_DETAILS.find((c) => c.id === id)
+    if (!detail) throw new DataNotFoundError('connection', id)
+    return detail
   }
 
   async envelopeList(query: PageQuery): Promise<EnvelopePage> {
@@ -823,6 +824,8 @@ const MOCK_PARTNER_REF = {id: 'mock-partner-1', key: 'ACME', name: 'Acme Retail'
 
 const MOCK_CONNECTIONS: ConnectionPage['connections'] = [
   {id: 'mock-connection-1', name: 'Acme SFTP', kind: 'sftp', host: 'sftp.example.invalid', provisioned: true, as2Ready: false, partnerCount: 1},
+  {id: 'mock-connection-2', name: 'Globex hosted', kind: 'hosted_sftp', host: null, provisioned: false, as2Ready: false, partnerCount: 1},
+  {id: 'mock-connection-3', name: 'Initech hosted', kind: 'hosted_sftp', host: null, provisioned: false, as2Ready: false, partnerCount: 0},
 ]
 
 const MOCK_CONNECTION_DETAIL: ConnectionDetail = {
@@ -838,6 +841,56 @@ const MOCK_CONNECTION_DETAIL: ConnectionDetail = {
   as2Ready: false,
   partners: [MOCK_PARTNER_REF],
 }
+
+// A hosted SFTP login, as a server with hosted SFTP's server details sends it.
+const MOCK_HOSTED_CONNECTION_DETAIL: ConnectionDetail = {
+  id: 'mock-connection-2',
+  name: 'Globex hosted',
+  kind: 'hosted_sftp',
+  host: null,
+  port: null,
+  username: null,
+  inboundDirectory: 'toTediware',
+  outboundDirectory: 'fromTediware',
+  provisioned: false,
+  as2Ready: false,
+  sftpUsername: 'globex-edi',
+  hostedSftpAllowedIps: ['203.0.113.7', '198.51.100.0/24'],
+  hostedSftpSetupStatus: 'active',
+  hostedSftpSetupError: null,
+  hostedSftpServer: {
+    host: 'sftp.example.invalid',
+    port: 22,
+    staticIps: ['192.0.2.10', '192.0.2.11'],
+    hostKeyFingerprints: [
+      {keyType: 'ED25519', fingerprint: 'SHA256:mockEd25519Fingerprint'},
+      {keyType: 'RSA', fingerprint: 'SHA256:mockRsaFingerprint'},
+    ],
+  },
+  partners: [{id: 'mock-partner-2', key: 'GLOBEX', name: 'Globex'}],
+}
+
+// A hosted SFTP login from a server that predates hostedSftpServer, with its
+// setup failed.
+const MOCK_HOSTED_CONNECTION_DETAIL_WITHOUT_SERVER: ConnectionDetail = {
+  id: 'mock-connection-3',
+  name: 'Initech hosted',
+  kind: 'hosted_sftp',
+  host: null,
+  port: null,
+  username: null,
+  inboundDirectory: 'toTediware',
+  outboundDirectory: 'fromTediware',
+  provisioned: false,
+  as2Ready: false,
+  sftpUsername: 'initech',
+  hostedSftpAllowedIps: [],
+  hostedSftpSetupStatus: 'error',
+  hostedSftpSetupError: 'Username is not available',
+  partners: [],
+}
+
+const MOCK_CONNECTION_DETAILS = [MOCK_CONNECTION_DETAIL, MOCK_HOSTED_CONNECTION_DETAIL, MOCK_HOSTED_CONNECTION_DETAIL_WITHOUT_SERVER]
 
 const MOCK_ENVELOPES: EnvelopePage['envelopes'] = [
   {id: 'mock-envelope-1', name: 'Us', external: false, interchangeExtid: 'SENDERID', interchangeExtidQualifier: 'ZZ', applicationCode: 'SENDERID'},
@@ -1114,6 +1167,15 @@ const MOCK_PARTNERS: PartnerPage['partners'] = [
       {direction: 'outbound', status: 'active'},
     ],
   },
+  {
+    id: 'mock-partner-2',
+    key: 'GLOBEX',
+    name: 'Globex',
+    connection: {id: 'mock-connection-2', name: 'Globex hosted', kind: 'hosted_sftp'},
+    inboundSets: [],
+    outboundSets: [],
+    flows: [],
+  },
 ]
 
 const MOCK_PARTNER_DETAIL: PartnerDetail = {
@@ -1163,6 +1225,23 @@ const MOCK_PARTNER_DETAIL: PartnerDetail = {
     {id: 'mock-flow-1', name: 'Acme Inbound', direction: 'inbound', status: 'active'},
     {id: 'mock-flow-2', name: 'Acme Outbound', direction: 'outbound', status: 'active'},
   ],
+}
+
+// A partner on the hosted SFTP login, whose embedded connection is the
+// connection's own shape without its partners.
+const {partners: _hostedPartners, ...MOCK_HOSTED_CONNECTION_EMBED} = MOCK_HOSTED_CONNECTION_DETAIL
+const MOCK_HOSTED_PARTNER_DETAIL: PartnerDetail = {
+  ...MOCK_PARTNER_DETAIL,
+  id: 'mock-partner-2',
+  key: 'GLOBEX',
+  name: 'Globex',
+  connection: MOCK_HOSTED_CONNECTION_EMBED,
+  externalEnvelope: null,
+  inboundWebhook: null,
+  outboundWebhook: null,
+  errorWebhook: null,
+  transactionSets: [],
+  flows: [],
 }
 
 // ---------------------------------------------------------------------------

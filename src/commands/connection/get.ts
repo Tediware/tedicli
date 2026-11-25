@@ -2,14 +2,15 @@ import {Args} from '@oclif/core'
 
 import {PlatformCommand, SERVER_DATA} from '../../platform-base-command.js'
 import {ConnectionDetail} from '../../lib/platform.js'
+import {hostedSftpRows} from '../../lib/render.js'
 import {cell} from '../../lib/table.js'
 
 export default class ConnectionGet extends PlatformCommand<typeof ConnectionGet> {
-  static summary = 'Show one connection: transport settings, AS2 identifiers, and the partners on it.'
+  static summary = 'Show one connection: transport settings, AS2 identifiers, a hosted SFTP login, and the partners on it.'
 
   static description = `${SERVER_DATA}
 
-Credentials are never returned; the server leaves them out rather than masking them.`
+For a hosted SFTP connection, a login on Tediware's own server, it shows what to give the partner: the host and port, the username, the server's addresses and host key fingerprints, the addresses logins are allowed from, and the login's setup status. Credentials are never returned; the server leaves them out rather than masking them, so the password is not shown.`
 
   static examples = ['<%= config.bin %> connection get 9c1b2a3d-...', '<%= config.bin %> connection get 9c1b2a3d-... --json']
 
@@ -24,6 +25,9 @@ Credentials are never returned; the server leaves them out rather than masking t
     this.log(`${c.name}  (${c.kind})`)
     this.log(`Id             ${c.id}`)
     if (c.host) this.log(`Host           ${c.host}${c.port ? `:${c.port}` : ''}${c.username ? ` as ${c.username}` : ''}`)
+    if (c.kind === 'hosted_sftp') {
+      for (const [label, value] of hostedSftpRows(c)) this.log(`${label.padEnd(15)}${value}`)
+    }
     if (c.inboundDirectory || c.outboundDirectory) {
       this.log(`Directories    in ${cell(c.inboundDirectory)}, out ${cell(c.outboundDirectory)}`)
     }
