@@ -19,8 +19,8 @@ updates:
           - patch
     ignore:
       # @types/node is deliberately held at the major matching the oldest
-      # supported runtime (engines.node >= 18.19.0). Bumping it would let
-      # code type-check against APIs that do not exist on Node 18.
+      # supported runtime (engines.node >= 22.0.0). Bumping it would let
+      # code type-check against APIs that do not exist on Node 22.
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
 

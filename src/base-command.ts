@@ -145,7 +145,9 @@ export abstract class BaseCommand<T extends typeof Command> extends Command {
   protected async catch(err: Error & {exitCode?: number; oclif?: {exit?: number | false}}): Promise<unknown> {
     if (err instanceof TediError) return this.fail(err.message, err.exitCode, err.suggestions, err.code ?? null)
     if (err.oclif !== undefined) {
-      if (!this.jsonEnabled()) return super.catch(err)
+      // oclif 5 types CommandError's exit as number only, but a CLIError can
+      // still carry `exit: false` at runtime; super.catch handles both.
+      if (!this.jsonEnabled()) return super.catch(err as Interfaces.CommandError)
       const exit = typeof err.oclif.exit === 'number' ? err.oclif.exit : EXIT_UNUSABLE
       return this.fail(oneLine(err.message), exit, [], null)
     }

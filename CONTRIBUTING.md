@@ -27,6 +27,9 @@ the API rather than embedding platform logic or reference data in the client.
 
 ## Development
 
+Node.js 22 or newer. `.nvmrc` pins 22, the supported minimum, so development
+runs on the oldest Node users can have; CI also tests 24.
+
 ```bash
 npm install
 npm run build          # compile TypeScript to dist/

@@ -22,6 +22,8 @@ those properties in one place.
 
 ## Install
 
+Requires Node.js 22 or newer.
+
 ```bash
 npm install -g @tediware/tedi
 ```
