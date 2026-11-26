@@ -6,6 +6,19 @@ on:
   pull_request:
 
 jobs:
+  # The same gate as .githooks/pre-push, here so `git push --no-verify` cannot
+  # skip it. Its own job, not a matrix step: the audit reads package-lock.json
+  # and does not depend on the Node version, so it needs no install.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+      - name: Fail on any npm advisory
+        run: npm audit
+
   build:
     runs-on: ubuntu-latest
     strategy:

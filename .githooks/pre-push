@@ -1,0 +1,30 @@
+#!/bin/sh
+# Block a push while `npm audit` reports any advisory, at any severity, in
+# runtime or dev dependencies. Installed by `npm install` (the `prepare`
+# script points core.hooksPath at .githooks/); see CONTRIBUTING.md.
+#
+# A failure to run the audit at all (no npm on PATH, registry unreachable)
+# also blocks: an audit that did not run is not a clean audit.
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "pre-push: npm is not on PATH, so npm audit cannot run. Push blocked." >&2
+  exit 1
+fi
+
+echo "pre-push: running npm audit..." >&2
+if npm audit >&2; then
+  exit 0
+fi
+
+cat >&2 <<'MSG'
+
+pre-push: push blocked, npm audit did not come back clean (see above).
+  Fix with `npm audit fix` where it is non-breaking; otherwise upgrade the
+  parent dependency. Do not use `npm audit fix --force` without reading what
+  it installs: it can downgrade packages.
+  If the audit itself failed to run (offline, registry error), retry once
+  the registry is reachable.
+MSG
+exit 1

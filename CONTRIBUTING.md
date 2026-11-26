@@ -39,6 +39,24 @@ npm run lint           # type-check
 npm test               # run tests
 ```
 
+### Pre-push audit gate
+
+`npm install` runs the `prepare` script, which points this clone's
+`core.hooksPath` at the tracked `.githooks/` directory. Its `pre-push` hook runs
+`npm audit` and **blocks the push while any advisory is open**, at any severity,
+in runtime or dev dependencies. It also blocks if the audit cannot run (no
+`npm` on PATH, registry unreachable).
+
+To clear it, use `npm audit fix` when the fix is non-breaking. Otherwise upgrade
+the parent dependency yourself. Don't run `npm audit fix --force` blind: it
+picks whatever version clears the advisory, and that can be a *downgrade*.
+
+If you already had a custom `core.hooksPath`, the installer leaves it alone and
+says so. Run `git config core.hooksPath .githooks` to opt in by hand.
+
+CI runs the same `npm audit` as its own job, so `git push --no-verify` skips
+only the local check.
+
 ### Running `tedi` as a command locally
 
 `npm link` symlinks the `tedi` command to this repo so you can invoke it by name:

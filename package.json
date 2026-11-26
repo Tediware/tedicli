@@ -135,6 +135,7 @@
     "postpack": "rm -f oclif.manifest.json",
     "prepack": "npm run build && oclif manifest",
     "pretest": "npm run build",
-    "test": "node --import tsx --test test/*.test.ts"
+    "test": "node --import tsx --test test/*.test.ts",
+    "prepare": "node scripts/install-git-hooks.mjs"
   }
 }
